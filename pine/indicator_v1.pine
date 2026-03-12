@@ -1,25 +1,23 @@
 //@version=5
 indicator("Session Sweep IFVG Retest Model", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
 //====================================================
 // INPUTS
-//==================================================== 
+//====================================================
+tz               = input.string("America/New_York", "Timezone")
+asiaSession      = input.session("2000-0000", "Asia Session")
+londonSession    = input.session("0200-0500", "London Session")
+premarketSession = input.session("0700-0930", "Premarket Session")
+entrySession     = input.session("0930-1030", "Entry Window")
 
+showSessionBg    = input.bool(true, "Show Session Background")
+showLevels       = input.bool(true, "Show Session Levels")
+showRawFVGs      = input.bool(false, "Show Raw FVG Boxes")
+showSweepLabels  = input.bool(false, "Show Sweep Labels")
+showTradeVisuals = input.bool(true, "Show Trade Visuals")
 
-
-tz = input.string("America/New_York", "Timezone") 
-asiaSession=input.session("2000-0000", "Asia Session") 
-londonSession=input.session("0200-0500", "London Session") 
-premarketSession=input.session("0700-0930", "Pre-Market Session") 
-entrySession=input.session("0930-1030", "Entry Session")  
-
-showSessionsBg = input.bool(true, "Show Sessions Background")  
-showLevels = input.bool(true, "Show Session Levels") 
-showRawFVGs = input.bool(true, "Show Raw FVGs")
-showSweepLabels = input.bool(false, "Show Sweep Labels") 
-showTradeVisual = input.bool(true,"Show Trade Visuals") 
- 
-pivotLeft = input.int(2, "Pivot Left", minval=1) 
-pivotRight = input.int(2,"Swing Right", minval=1)
+pivotLeft        = input.int(2, "Swing Left", minval=1)
+pivotRight       = input.int(2, "Swing Right", minval=1)
 lineExtendBars   = input.int(60, "Line Extend Bars", minval=10, maxval=300)
 zoneExtendBars   = input.int(8, "Zone Extend Bars", minval=2, maxval=50)
 reactionLookback = input.int(5, "Fresh FVG Lookback", minval=1, maxval=20)
@@ -32,20 +30,25 @@ zoneColor        = input.color(color.new(color.orange, 80), "Active Zone Color")
 
 //====================================================
 // SESSION DETECTION
-//==================================================== 
-
+//====================================================
 inAsia      = not na(time(timeframe.period, asiaSession, tz))
 inLondon    = not na(time(timeframe.period, londonSession, tz))
 inPremarket = not na(time(timeframe.period, premarketSession, tz))
-inEntry     = not na(time(timeframe.period, entrySession, tz)) 
+inEntry     = not na(time(timeframe.period, entrySession, tz))
 
 asiaStart      = inAsia and not inAsia[1]
 londonStart    = inLondon and not inLondon[1]
-premarketStart = inPremarket and not inPremarket[1] 
+premarketStart = inPremarket and not inPremarket[1]
 
 //====================================================
 // SESSION HIGHS / LOWS
-//==================================================== 
+//====================================================
+var float asiaHigh = na
+var float asiaLow = na
+var float londonHigh = na
+var float londonLow = na
+var float preHigh = na
+var float preLow = na
 
 if asiaStart
     asiaHigh := high
@@ -68,7 +71,6 @@ else if inPremarket
     preHigh := math.max(nz(preHigh, high), high)
     preLow := math.min(nz(preLow, low), low)
 
-
 //====================================================
 // DAILY STATE RESET
 //====================================================
@@ -81,16 +83,21 @@ if premarketStart
     sellsideSwept := false
     buysideSwept := false
     longTaken := false
-    shortTaken := false 
+    shortTaken := false
 
 //====================================================
 // SESSION BACKGROUNDS
+// bgcolor() must be in global scope
 //====================================================
-if showSessionBg
-    bgcolor(inAsia ? color.new(color.blue, 92) : na)
-    bgcolor(inLondon ? color.new(color.purple, 93) : na)
-    bgcolor(inPremarket ? color.new(color.gray, 88) : na)
-    bgcolor(inEntry ? color.new(color.silver, 84) : na) 
+asiaColor      = showSessionBg and inAsia ? color.new(color.blue, 92) : na
+londonColor    = showSessionBg and inLondon ? color.new(color.purple, 93) : na
+premarketColor = showSessionBg and inPremarket ? color.new(color.gray, 88) : na
+entryColor     = showSessionBg and inEntry ? color.new(color.silver, 84) : na
+
+bgcolor(asiaColor)
+bgcolor(londonColor)
+bgcolor(premarketColor)
+bgcolor(entryColor)
 
 //====================================================
 // SESSION LEVELS
@@ -101,9 +108,9 @@ plot(showLevels ? londonHigh : na, "London High", color=color.new(color.black, 3
 plot(showLevels ? londonLow : na, "London Low", color=color.new(color.black, 30), linewidth=1, style=plot.style_linebr)
 plot(showLevels ? preHigh : na, "Premarket High", color=color.new(color.orange, 10), linewidth=1, style=plot.style_linebr)
 plot(showLevels ? preLow : na, "Premarket Low", color=color.new(color.orange, 10), linewidth=1, style=plot.style_linebr)
+
 //====================================================
 // HTF BIAS PROXY
-// Replace later with real structure if needed
 //====================================================
 htf5Close  = request.security(syminfo.tickerid, "5", close)
 htf5Ema20  = request.security(syminfo.tickerid, "5", ta.ema(close, 20))
@@ -115,6 +122,7 @@ htf15Ema50 = request.security(syminfo.tickerid, "15", ta.ema(close, 50))
 
 bullBias = htf5Close > htf5Ema20 and htf15Close > htf15Ema20 and htf5Ema20 > htf5Ema50 and htf15Ema20 > htf15Ema50
 bearBias = htf5Close < htf5Ema20 and htf15Close < htf15Ema20 and htf5Ema20 < htf5Ema50 and htf15Ema20 < htf15Ema50
+
 //====================================================
 // SWING HIGHS / LOWS FOR STOPS
 //====================================================
@@ -128,7 +136,8 @@ if not na(ph)
     lastSwingHigh := ph
 
 if not na(pl)
-    lastSwingLow := pl 
+    lastSwingLow := pl
+
 //====================================================
 // SWEEP LOGIC
 //====================================================
@@ -147,8 +156,12 @@ if buySweepAsia or buySweepLondon or buySweepPre
     buysideSwept := true
 
 plotshape(showSweepLabels and (sellSweepAsia or sellSweepLondon or sellSweepPre), title="Sellside Sweep", style=shape.labelup, location=location.belowbar, text="SSL", color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
-plotshape(showSweepLabels and (buySweepAsia or buySweepLondon or buySweepPre), title="Buyside Sweep", style=shape.labeldown, location=location.abovebar, text="BSL", color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)//====================================================
+plotshape(showSweepLabels and (buySweepAsia or buySweepLondon or buySweepPre), title="Buyside Sweep", style=shape.labeldown, location=location.abovebar, text="BSL", color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+
+//====================================================
 // STANDARD FVG DETECTION
+// Bullish FVG = low > high[2]
+// Bearish FVG = high < low[2]
 //====================================================
 bullishFVG = low > high[2]
 bearishFVG = high < low[2]
