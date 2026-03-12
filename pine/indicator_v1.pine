@@ -1,5 +1,5 @@
-//@version=5
-indicator("Session Sweep IFVG Retest Model", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+//@version=6
+indicator("Session Sweep IFVG Retest Model - Session Focused", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
 
 //====================================================
 // INPUTS
@@ -18,10 +18,11 @@ showTradeVisuals = input.bool(true, "Show Trade Visuals")
 
 pivotLeft        = input.int(2, "Swing Left", minval=1)
 pivotRight       = input.int(2, "Swing Right", minval=1)
-lineExtendBars   = input.int(60, "Line Extend Bars", minval=10, maxval=300)
-zoneExtendBars   = input.int(8, "Zone Extend Bars", minval=2, maxval=50)
+lineExtendBars   = input.int(12, "Line Extend Bars", minval=3, maxval=40)
+zoneExtendBars   = input.int(5, "Zone Extend Bars", minval=2, maxval=20)
 reactionLookback = input.int(5, "Fresh FVG Lookback", minval=1, maxval=20)
 requireFreshFVG  = input.bool(true, "Require Fresh Same-Direction FVG")
+ifvgExpiryBars   = input.int(15, "IFVG Expiry Bars", minval=3, maxval=50)
 
 entryLineColor   = input.color(color.new(color.blue, 0), "Entry Line Color")
 stopLineColor    = input.color(color.new(color.red, 0), "Stop Line Color")
@@ -72,22 +73,70 @@ else if inPremarket
     preLow := math.min(nz(preLow, low), low)
 
 //====================================================
-// DAILY STATE RESET
+// STORED FVG STATE
+//====================================================
+var float latestBullFvgLo = na
+var float latestBullFvgHi = na
+var int latestBullFvgBar = na
+
+var float latestBearFvgLo = na
+var float latestBearFvgHi = na
+var int latestBearFvgBar = na
+
+//====================================================
+// IFVG STATE
+//====================================================
+var bool bullIfvgActive = false
+var float bullIfvgLo = na
+var float bullIfvgHi = na
+var int bullIfvgBreakBar = na
+
+var bool bearIfvgActive = false
+var float bearIfvgLo = na
+var float bearIfvgHi = na
+var int bearIfvgBreakBar = na
+
+//====================================================
+// SWEEP / TRADE STATE
 //====================================================
 var bool sellsideSwept = false
 var bool buysideSwept = false
+var int sellSweepBar = na
+var int buySweepBar = na
 var bool longTaken = false
 var bool shortTaken = false
 
+//====================================================
+// DAILY RESET AT PREMARKET START
+//====================================================
 if premarketStart
     sellsideSwept := false
     buysideSwept := false
+    sellSweepBar := na
+    buySweepBar := na
     longTaken := false
     shortTaken := false
 
+    bullIfvgActive := false
+    bullIfvgLo := na
+    bullIfvgHi := na
+    bullIfvgBreakBar := na
+
+    bearIfvgActive := false
+    bearIfvgLo := na
+    bearIfvgHi := na
+    bearIfvgBreakBar := na
+
+    latestBullFvgLo := na
+    latestBullFvgHi := na
+    latestBullFvgBar := na
+
+    latestBearFvgLo := na
+    latestBearFvgHi := na
+    latestBearFvgBar := na
+
 //====================================================
 // SESSION BACKGROUNDS
-// bgcolor() must be in global scope
 //====================================================
 asiaColor      = showSessionBg and inAsia ? color.new(color.blue, 92) : na
 londonColor    = showSessionBg and inLondon ? color.new(color.purple, 93) : na
@@ -151,17 +200,21 @@ buySweepPre     = inEntry and not na(preHigh) and high > preHigh and close < pre
 
 if sellSweepAsia or sellSweepLondon or sellSweepPre
     sellsideSwept := true
+    sellSweepBar := bar_index
+    buysideSwept := false
+    buySweepBar := na
 
 if buySweepAsia or buySweepLondon or buySweepPre
     buysideSwept := true
+    buySweepBar := bar_index
+    sellsideSwept := false
+    sellSweepBar := na
 
 plotshape(showSweepLabels and (sellSweepAsia or sellSweepLondon or sellSweepPre), title="Sellside Sweep", style=shape.labelup, location=location.belowbar, text="SSL", color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
 plotshape(showSweepLabels and (buySweepAsia or buySweepLondon or buySweepPre), title="Buyside Sweep", style=shape.labeldown, location=location.abovebar, text="BSL", color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
 
 //====================================================
 // STANDARD FVG DETECTION
-// Bullish FVG = low > high[2]
-// Bearish FVG = high < low[2]
 //====================================================
 bullishFVG = low > high[2]
 bearishFVG = high < low[2]
@@ -172,63 +225,61 @@ bullFvgHi = low
 bearFvgLo = high
 bearFvgHi = low[2]
 
-if showRawFVGs and bullishFVG
-    box.new(bar_index - 2, bullFvgHi, bar_index + 1, bullFvgLo, xloc=xloc.bar_index, bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 0))
-
-if showRawFVGs and bearishFVG
-    box.new(bar_index - 2, bearFvgHi, bar_index + 1, bearFvgLo, xloc=xloc.bar_index, bgcolor=color.new(color.orange, 85), border_color=color.new(color.orange, 0))
-
-//====================================================
-// STORE LATEST FVGS
-//====================================================
-var float latestBullFvgLo = na
-var float latestBullFvgHi = na
-var int latestBullFvgBar = na
-
-var float latestBearFvgLo = na
-var float latestBearFvgHi = na
-var int latestBearFvgBar = na
-
-if bullishFVG
+if bullishFVG and (inPremarket or inEntry)
     latestBullFvgLo := bullFvgLo
     latestBullFvgHi := bullFvgHi
     latestBullFvgBar := bar_index
 
-if bearishFVG
+if bearishFVG and (inPremarket or inEntry)
     latestBearFvgLo := bearFvgLo
     latestBearFvgHi := bearFvgHi
     latestBearFvgBar := bar_index
 
+if showRawFVGs and bullishFVG and (inPremarket or inEntry)
+    box.new(bar_index - 2, bullFvgHi, bar_index + 1, bullFvgLo, xloc=xloc.bar_index, bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 0))
+
+if showRawFVGs and bearishFVG and (inPremarket or inEntry)
+    box.new(bar_index - 2, bearFvgHi, bar_index + 1, bearFvgLo, xloc=xloc.bar_index, bgcolor=color.new(color.orange, 85), border_color=color.new(color.orange, 0))
+
 //====================================================
 // IFVG ACTIVATION
-// Bullish IFVG = bearish FVG breaks above
-// Bearish IFVG = bullish FVG breaks below
 //====================================================
-var bool bullIfvgActive = false
-var float bullIfvgLo = na
-var float bullIfvgHi = na
-var int bullIfvgBreakBar = na
-
-var bool bearIfvgActive = false
-var float bearIfvgLo = na
-var float bearIfvgHi = na
-var int bearIfvgBreakBar = na
-
-bullInversionBreak = not na(latestBearFvgHi) and close > latestBearFvgHi
+bullInversionBreak = sellsideSwept and not na(sellSweepBar) and bar_index > sellSweepBar and not na(latestBearFvgHi) and close > latestBearFvgHi
 if bullInversionBreak
     bullIfvgActive := true
     bullIfvgLo := latestBearFvgLo
     bullIfvgHi := latestBearFvgHi
     bullIfvgBreakBar := bar_index
     bearIfvgActive := false
+    bearIfvgLo := na
+    bearIfvgHi := na
+    bearIfvgBreakBar := na
 
-bearInversionBreak = not na(latestBullFvgLo) and close < latestBullFvgLo
+bearInversionBreak = buysideSwept and not na(buySweepBar) and bar_index > buySweepBar and not na(latestBullFvgLo) and close < latestBullFvgLo
 if bearInversionBreak
     bearIfvgActive := true
     bearIfvgLo := latestBullFvgLo
     bearIfvgHi := latestBullFvgHi
     bearIfvgBreakBar := bar_index
     bullIfvgActive := false
+    bullIfvgLo := na
+    bullIfvgHi := na
+    bullIfvgBreakBar := na
+
+//====================================================
+// EXPIRE STALE IFVGS
+//====================================================
+if bullIfvgActive and not na(bullIfvgBreakBar) and bar_index - bullIfvgBreakBar > ifvgExpiryBars
+    bullIfvgActive := false
+    bullIfvgLo := na
+    bullIfvgHi := na
+    bullIfvgBreakBar := na
+
+if bearIfvgActive and not na(bearIfvgBreakBar) and bar_index - bearIfvgBreakBar > ifvgExpiryBars
+    bearIfvgActive := false
+    bearIfvgLo := na
+    bearIfvgHi := na
+    bearIfvgBreakBar := na
 
 //====================================================
 // FRESH REACTION FVG FILTER
@@ -242,19 +293,8 @@ bearReactionPass = requireFreshFVG ? recentBearReactionFVG : true
 //====================================================
 // RETEST OF INVERTED FVG
 //====================================================
-longRetest =
-    bullIfvgActive and
-    bar_index > nz(bullIfvgBreakBar, bar_index) and
-    low <= bullIfvgHi and
-    high >= bullIfvgLo and
-    close > bullIfvgHi
-
-shortRetest =
-    bearIfvgActive and
-    bar_index > nz(bearIfvgBreakBar, bar_index) and
-    high >= bearIfvgLo and
-    low <= bearIfvgHi and
-    close < bearIfvgLo
+longRetest = bullIfvgActive and bar_index > nz(bullIfvgBreakBar, bar_index) and low <= bullIfvgHi and high >= bullIfvgLo and close > bullIfvgHi
+shortRetest = bearIfvgActive and bar_index > nz(bearIfvgBreakBar, bar_index) and high >= bearIfvgLo and low <= bearIfvgHi and close < bearIfvgLo
 
 //====================================================
 // PICK TARGET
@@ -286,23 +326,8 @@ f_pickShortTarget(_entry, _l1, _l2, _l3) =>
 //====================================================
 // FINAL ENTRY CONDITIONS
 //====================================================
-longSignal =
-    inEntry and
-    sellsideSwept and
-    bullBias and
-    bullReactionPass and
-    longRetest and
-    not longTaken and
-    not na(lastSwingLow)
-
-shortSignal =
-    inEntry and
-    buysideSwept and
-    bearBias and
-    bearReactionPass and
-    shortRetest and
-    not shortTaken and
-    not na(lastSwingHigh)
+longSignal = inEntry and sellsideSwept and bullBias and bullReactionPass and longRetest and not longTaken and not na(lastSwingLow)
+shortSignal = inEntry and buysideSwept and bearBias and bearReactionPass and shortRetest and not shortTaken and not na(lastSwingHigh)
 
 //====================================================
 // ENTRY / STOP / TARGET VALUES
@@ -342,128 +367,26 @@ f_clearDrawings() =>
     if not na(activeTargetLabel)
         label.delete(activeTargetLabel)
 
-// Long visuals
 if longSignal and showTradeVisuals
     f_clearDrawings()
-
-    activeZoneBox := box.new(
-         bar_index - 1, bullIfvgHi,
-         bar_index + zoneExtendBars, bullIfvgLo,
-         xloc=xloc.bar_index,
-         bgcolor=zoneColor,
-         border_color=color.new(color.orange, 0)
-     )
-
-    activeEntryLine := line.new(
-         bar_index, longEntry,
-         bar_index + lineExtendBars, longEntry,
-         xloc=xloc.bar_index,
-         color=entryLineColor,
-         width=2
-     )
-
-    activeStopLine := line.new(
-         bar_index, longStop,
-         bar_index + lineExtendBars, longStop,
-         xloc=xloc.bar_index,
-         color=stopLineColor,
-         width=2
-     )
-
-    activeTargetLine := line.new(
-         bar_index, longTarget,
-         bar_index + lineExtendBars, longTarget,
-         xloc=xloc.bar_index,
-         color=targetLineColor,
-         width=2
-     )
-
-    activeEntryLabel := label.new(
-         bar_index + 2, longEntry,
-         "Entry",
-         style=label.style_label_left,
-         textcolor=color.white,
-         color=color.new(entryLineColor, 20)
-     )
-
-    activeStopLabel := label.new(
-         bar_index + 2, longStop,
-         "Stop Loss",
-         style=label.style_label_left,
-         textcolor=color.white,
-         color=color.new(stopLineColor, 20)
-     )
-
-    activeTargetLabel := label.new(
-         bar_index + 2, longTarget,
-         "Target",
-         style=label.style_label_left,
-         textcolor=color.white,
-         color=color.new(targetLineColor, 20)
-     )
-
+    activeZoneBox := box.new(bar_index - 1, bullIfvgHi, bar_index + zoneExtendBars, bullIfvgLo, xloc=xloc.bar_index, bgcolor=zoneColor, border_color=color.new(color.orange, 0))
+    activeEntryLine := line.new(bar_index, longEntry, bar_index + lineExtendBars, longEntry, xloc=xloc.bar_index, color=entryLineColor, width=2)
+    activeStopLine := line.new(bar_index, longStop, bar_index + lineExtendBars, longStop, xloc=xloc.bar_index, color=stopLineColor, width=2)
+    activeTargetLine := line.new(bar_index, longTarget, bar_index + lineExtendBars, longTarget, xloc=xloc.bar_index, color=targetLineColor, width=2)
+    activeEntryLabel := label.new(bar_index, longEntry, "Entry", style=label.style_label_left, textcolor=color.white, color=color.new(entryLineColor, 20))
+    activeStopLabel := label.new(bar_index, longStop, "Stop Loss", style=label.style_label_left, textcolor=color.white, color=color.new(stopLineColor, 20))
+    activeTargetLabel := label.new(bar_index, longTarget, "Target", style=label.style_label_left, textcolor=color.white, color=color.new(targetLineColor, 20))
     longTaken := true
 
-// Short visuals
 if shortSignal and showTradeVisuals
     f_clearDrawings()
-
-    activeZoneBox := box.new(
-         bar_index - 1, bearIfvgHi,
-         bar_index + zoneExtendBars, bearIfvgLo,
-         xloc=xloc.bar_index,
-         bgcolor=zoneColor,
-         border_color=color.new(color.orange, 0)
-     )
-
-    activeEntryLine := line.new(
-         bar_index, shortEntry,
-         bar_index + lineExtendBars, shortEntry,
-         xloc=xloc.bar_index,
-         color=entryLineColor,
-         width=2
-     )
-
-    activeStopLine := line.new(
-         bar_index, shortStop,
-         bar_index + lineExtendBars, shortStop,
-         xloc=xloc.bar_index,
-         color=stopLineColor,
-         width=2
-     )
-
-    activeTargetLine := line.new(
-         bar_index, shortTarget,
-         bar_index + lineExtendBars, shortTarget,
-         xloc=xloc.bar_index,
-         color=targetLineColor,
-         width=2
-     )
-
-    activeEntryLabel := label.new(
-         bar_index + 2, shortEntry,
-         "Entry",
-         style=label.style_label_left,
-         textcolor=color.white,
-         color=color.new(entryLineColor, 20)
-     )
-
-    activeStopLabel := label.new(
-         bar_index + 2, shortStop,
-         "Stop Loss",
-         style=label.style_label_left,
-         textcolor=color.white,
-         color=color.new(stopLineColor, 20)
-     )
-
-    activeTargetLabel := label.new(
-         bar_index + 2, shortTarget,
-         "Target",
-         style=label.style_label_left,
-         textcolor=color.white,
-         color=color.new(targetLineColor, 20)
-     )
-
+    activeZoneBox := box.new(bar_index - 1, bearIfvgHi, bar_index + zoneExtendBars, bearIfvgLo, xloc=xloc.bar_index, bgcolor=zoneColor, border_color=color.new(color.orange, 0))
+    activeEntryLine := line.new(bar_index, shortEntry, bar_index + lineExtendBars, shortEntry, xloc=xloc.bar_index, color=entryLineColor, width=2)
+    activeStopLine := line.new(bar_index, shortStop, bar_index + lineExtendBars, shortStop, xloc=xloc.bar_index, color=stopLineColor, width=2)
+    activeTargetLine := line.new(bar_index, shortTarget, bar_index + lineExtendBars, shortTarget, xloc=xloc.bar_index, color=targetLineColor, width=2)
+    activeEntryLabel := label.new(bar_index, shortEntry, "Entry", style=label.style_label_left, textcolor=color.white, color=color.new(entryLineColor, 20))
+    activeStopLabel := label.new(bar_index, shortStop, "Stop Loss", style=label.style_label_left, textcolor=color.white, color=color.new(stopLineColor, 20))
+    activeTargetLabel := label.new(bar_index, shortTarget, "Target", style=label.style_label_left, textcolor=color.white, color=color.new(targetLineColor, 20))
     shortTaken := true
 
 plotshape(longSignal, title="Long Entry", style=shape.triangleup, location=location.belowbar, color=color.new(color.teal, 0), size=size.small, text="LONG")
