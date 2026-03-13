@@ -14,15 +14,10 @@ nyEntryEnd        = input.string("1100", "NY Entry Window End (HHMM)",     group
 // INPUTS — Visuals
 //====================================================
 grpVisual         = "Visuals"
-showSessionBg     = input.bool(true,  "Show Session Backgrounds",  group=grpVisual)
-showLevels        = input.bool(true,  "Show Session Levels",       group=grpVisual)
 showPDLevels      = input.bool(true,  "Show Prev Day H/L",         group=grpVisual)
 showEQLevels      = input.bool(true,  "Show Equal H/L Levels",     group=grpVisual)
-showSessionOpens  = input.bool(true,  "Show Session Open Markers", group=grpVisual)
-showRawFVGs       = input.bool(false, "Show Raw FVG Boxes",        group=grpVisual)
-showSweepLabels   = input.bool(true,  "Show Sweep Labels",         group=grpVisual)
+showSessionOpens  = input.bool(false, "Show Session Open Markers", group=grpVisual)
 showMSSLabels     = input.bool(true,  "Show MSS Labels",           group=grpVisual)
-showTradeVisuals  = input.bool(true,  "Show Trade Visuals",        group=grpVisual)
 showDashboard     = input.bool(true,  "Show Dashboard",            group=grpVisual)
 
 //====================================================
@@ -247,13 +242,6 @@ if nyEntryStart
     f_resetState()
     activeSession := "NY"
 
-//====================================================
-// SESSION BACKGROUNDS
-//====================================================
-bgcolor(showSessionBg and inAsia       ? color.new(color.blue,   92) : na)
-bgcolor(showSessionBg and inLondon     ? color.new(color.purple, 93) : na)
-bgcolor(showSessionBg and inPremarket  ? color.new(color.gray,   88) : na)
-bgcolor(showSessionBg and inNYEntry    ? color.new(color.silver, 84) : na)
 
 //====================================================
 // SESSION OPEN MARKERS
@@ -268,16 +256,10 @@ if showSessionOpens and nyEntryStart
     label.new(bar_index, low, "NY\nOpen",     style=label.style_label_up, color=color.new(color.silver, 30), textcolor=color.black, size=size.tiny)
 
 //====================================================
-// SESSION LEVELS
+// SESSION LEVELS — PDH/PDL only (session H/L tracked internally, not plotted)
 //====================================================
-plot(showLevels   ? asiaHigh   : na, "Asia High",      color=color.new(color.blue,    10), linewidth=1, style=plot.style_linebr)
-plot(showLevels   ? asiaLow    : na, "Asia Low",       color=color.new(color.blue,    10), linewidth=1, style=plot.style_linebr)
-plot(showLevels   ? londonHigh : na, "London High",    color=color.new(color.purple,  30), linewidth=1, style=plot.style_linebr)
-plot(showLevels   ? londonLow  : na, "London Low",     color=color.new(color.purple,  30), linewidth=1, style=plot.style_linebr)
-plot(showLevels   ? preHigh    : na, "Premarket High", color=color.new(color.orange,  10), linewidth=1, style=plot.style_linebr)
-plot(showLevels   ? preLow     : na, "Premarket Low",  color=color.new(color.orange,  10), linewidth=1, style=plot.style_linebr)
-plot(showPDLevels ? pdHigh     : na, "Prev Day High",  color=color.new(color.fuchsia, 10), linewidth=1, style=plot.style_linebr)
-plot(showPDLevels ? pdLow      : na, "Prev Day Low",   color=color.new(color.fuchsia, 10), linewidth=1, style=plot.style_linebr)
+plot(showPDLevels ? pdHigh : na, "Prev Day High", color=color.new(color.fuchsia, 10), linewidth=1, style=plot.style_linebr)
+plot(showPDLevels ? pdLow  : na, "Prev Day Low",  color=color.new(color.fuchsia, 10), linewidth=1, style=plot.style_linebr)
 
 //====================================================
 // HTF BIAS
@@ -353,12 +335,6 @@ if (nyBuySweepLondon or nyBuySweepPre) and not buysideSwept
     shortTargetLevel := nyBuySweepLondon ? londonLow : preLow
     sellsideSwept    := false
 
-plotshape(showSweepLabels and anySellSweep, title="Sellside Sweep",
-          style=shape.labelup,   location=location.belowbar, text="SSL",
-          color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
-plotshape(showSweepLabels and anyBuySweep,  title="Buyside Sweep",
-          style=shape.labeldown, location=location.abovebar, text="BSL",
-          color=color.new(color.red,   0), textcolor=color.white, size=size.tiny)
 
 //====================================================
 // DISPLACEMENT CANDLE
@@ -430,13 +406,6 @@ if bearishFVG and inAnyEntry
         cisdBearFvgLo := high
         cisdBearFvgHi := low[2]
 
-if showRawFVGs and bullishFVG and inAnyEntry
-    box.new(bar_index - 2, latestBullFvgHi, bar_index + 1, latestBullFvgLo,
-            bgcolor=color.new(color.green,  85), border_color=color.new(color.green,  0))
-
-if showRawFVGs and bearishFVG and inAnyEntry
-    box.new(bar_index - 2, latestBearFvgHi, bar_index + 1, latestBearFvgLo,
-            bgcolor=color.new(color.orange, 85), border_color=color.new(color.orange, 0))
 
 //====================================================
 // IFVG ACTIVATION
