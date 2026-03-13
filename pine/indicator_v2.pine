@@ -1,0 +1,647 @@
+//@version=6
+indicator("ICT NQ Multi-Session Liquidity Model v2", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+//====================================================
+// INPUTS — Sessions
+//====================================================
+grpSession        = "Sessions"
+tz                = input.string("America/New_York", "Timezone", group=grpSession)
+asiaEntryEnd      = input.string("2030", "Asia Entry Window End (HHMM)",   group=grpSession, tooltip="Asia open is 1900. Entry window = 1900 to this time.")
+londonEntryEnd    = input.string("0330", "London Entry Window End (HHMM)", group=grpSession, tooltip="London open is 0200. Entry window = 0200 to this time.")
+nyEntryEnd        = input.string("1100", "NY Entry Window End (HHMM)",     group=grpSession, tooltip="NY open is 0930. Entry window = 0930 to this time.")
+
+//====================================================
+// INPUTS — Visuals
+//====================================================
+grpVisual         = "Visuals"
+showSessionBg     = input.bool(true,  "Show Session Backgrounds",  group=grpVisual)
+showLevels        = input.bool(true,  "Show Session Levels",       group=grpVisual)
+showPDLevels      = input.bool(true,  "Show Prev Day H/L",         group=grpVisual)
+showEQLevels      = input.bool(true,  "Show Equal H/L Levels",     group=grpVisual)
+showSessionOpens  = input.bool(true,  "Show Session Open Markers", group=grpVisual)
+showRawFVGs       = input.bool(false, "Show Raw FVG Boxes",        group=grpVisual)
+showSweepLabels   = input.bool(true,  "Show Sweep Labels",         group=grpVisual)
+showMSSLabels     = input.bool(true,  "Show MSS Labels",           group=grpVisual)
+showTradeVisuals  = input.bool(true,  "Show Trade Visuals",        group=grpVisual)
+showDashboard     = input.bool(true,  "Show Dashboard",            group=grpVisual)
+
+//====================================================
+// INPUTS — Strategy
+//====================================================
+grpStrat          = "Strategy"
+pivotLeft         = input.int(2,    "Swing Left",               minval=1,             group=grpStrat)
+pivotRight        = input.int(2,    "Swing Right",              minval=1,             group=grpStrat)
+lineExtendBars    = input.int(12,   "Line Extend Bars",         minval=3,  maxval=40, group=grpStrat)
+zoneExtendBars    = input.int(5,    "Zone Extend Bars",         minval=2,  maxval=20, group=grpStrat)
+reactionLookback  = input.int(5,    "Fresh FVG Lookback",       minval=1,  maxval=20, group=grpStrat)
+requireFreshFVG   = input.bool(true, "Require Fresh FVG",                             group=grpStrat)
+ifvgExpiryBars    = input.int(15,   "IFVG Expiry Bars",         minval=3,  maxval=50, group=grpStrat)
+requireDisplace   = input.bool(true, "Require Displacement Candle",                   group=grpStrat)
+displaceMult      = input.float(1.5, "Displacement ATR Mult",   minval=0.5, maxval=5.0, step=0.1, group=grpStrat)
+requireMSS        = input.bool(true, "Require MSS",                                   group=grpStrat)
+requireHTFBias    = input.bool(true, "Require HTF Bias",                              group=grpStrat)
+eqTolerance       = input.float(0.1, "Equal H/L Tolerance (ATR mult)", minval=0.01, maxval=1.0, step=0.01, group=grpStrat)
+
+//====================================================
+// INPUTS — Colors
+//====================================================
+grpColor          = "Colors"
+entryLineColor    = input.color(color.new(color.blue,   0),  "Entry",  group=grpColor)
+stopLineColor     = input.color(color.new(color.red,    0),  "Stop",   group=grpColor)
+targetLineColor   = input.color(color.new(color.teal,   0),  "Target", group=grpColor)
+zoneColor         = input.color(color.new(color.orange, 80), "Zone",   group=grpColor)
+
+//====================================================
+// SESSION DETECTION
+//====================================================
+// Full sessions — for tracking H/L
+asiaFullSession      = "1900-0000"
+londonFullSession    = "0200-0500"
+premarketFullSession = "0700-0930"
+
+// Entry windows — first 1–1.5 hours of each session
+asiaEntrySession     = "1900-" + asiaEntryEnd
+londonEntrySession   = "0200-" + londonEntryEnd
+nyEntrySession       = "0930-" + nyEntryEnd
+
+inAsia          = not na(time(timeframe.period, asiaFullSession,      tz))
+inLondon        = not na(time(timeframe.period, londonFullSession,    tz))
+inPremarket     = not na(time(timeframe.period, premarketFullSession, tz))
+inAsiaEntry     = not na(time(timeframe.period, asiaEntrySession,     tz))
+inLondonEntry   = not na(time(timeframe.period, londonEntrySession,   tz))
+inNYEntry       = not na(time(timeframe.period, nyEntrySession,       tz))
+inAnyEntry      = inAsiaEntry or inLondonEntry or inNYEntry
+
+asiaStart        = inAsia       and not inAsia[1]
+londonStart      = inLondon     and not inLondon[1]
+premarketStart   = inPremarket  and not inPremarket[1]
+asiaEntryStart   = inAsiaEntry  and not inAsiaEntry[1]
+londonEntryStart = inLondonEntry and not inLondonEntry[1]
+nyEntryStart     = inNYEntry    and not inNYEntry[1]
+
+//====================================================
+// PREVIOUS DAY HIGH / LOW
+//====================================================
+pdHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdLow  = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_on)
+
+//====================================================
+// SESSION HIGHS / LOWS
+//====================================================
+var float asiaHigh   = na
+var float asiaLow    = na
+var float londonHigh = na
+var float londonLow  = na
+var float preHigh    = na
+var float preLow     = na
+
+if asiaStart
+    asiaHigh := high
+    asiaLow  := low
+else if inAsia
+    asiaHigh := math.max(nz(asiaHigh, high), high)
+    asiaLow  := math.min(nz(asiaLow,  low),  low)
+
+if londonStart
+    londonHigh := high
+    londonLow  := low
+else if inLondon
+    londonHigh := math.max(nz(londonHigh, high), high)
+    londonLow  := math.min(nz(londonLow,  low),  low)
+
+if premarketStart
+    preHigh := high
+    preLow  := low
+else if inPremarket
+    preHigh := math.max(nz(preHigh, high), high)
+    preLow  := math.min(nz(preLow,  low),  low)
+
+//====================================================
+// ATR + SWING PIVOTS
+//====================================================
+atr = ta.atr(14)
+
+ph = ta.pivothigh(high, pivotLeft, pivotRight)
+pl = ta.pivotlow(low,  pivotLeft, pivotRight)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow  := pl
+
+//====================================================
+// EQUAL HIGHS / LOWS
+//====================================================
+var float prevPivotHigh = na
+var float prevPivotLow  = na
+
+if not na(ph)
+    if not na(prevPivotHigh) and math.abs(ph - prevPivotHigh) <= atr * eqTolerance
+        eqMid = (ph + prevPivotHigh) / 2
+        if showEQLevels
+            line.new(bar_index - pivotRight - pivotLeft, eqMid, bar_index + 20, eqMid,
+                     color=color.new(color.yellow, 20), style=line.style_dashed, width=1)
+            label.new(bar_index - pivotRight, eqMid, "EQH",
+                     style=label.style_label_right, color=color.new(color.yellow, 20),
+                     textcolor=color.black, size=size.tiny)
+    prevPivotHigh := ph
+
+if not na(pl)
+    if not na(prevPivotLow) and math.abs(pl - prevPivotLow) <= atr * eqTolerance
+        eqMid = (pl + prevPivotLow) / 2
+        if showEQLevels
+            line.new(bar_index - pivotRight - pivotLeft, eqMid, bar_index + 20, eqMid,
+                     color=color.new(color.yellow, 20), style=line.style_dashed, width=1)
+            label.new(bar_index - pivotRight, eqMid, "EQL",
+                     style=label.style_label_right, color=color.new(color.yellow, 20),
+                     textcolor=color.black, size=size.tiny)
+    prevPivotLow := pl
+
+//====================================================
+// FVG STATE
+//====================================================
+var float latestBullFvgLo  = na
+var float latestBullFvgHi  = na
+var float latestBearFvgLo  = na
+var float latestBearFvgHi  = na
+
+//====================================================
+// IFVG STATE
+//====================================================
+var bool  bullIfvgActive   = false
+var float bullIfvgLo       = na
+var float bullIfvgHi       = na
+var int   bullIfvgBreakBar = na
+
+var bool  bearIfvgActive   = false
+var float bearIfvgLo       = na
+var float bearIfvgHi       = na
+var int   bearIfvgBreakBar = na
+
+//====================================================
+// TRADE STATE — reset each entry window
+//====================================================
+var bool   sellsideSwept  = false
+var bool   buysideSwept   = false
+var int    sellSweepBar   = na
+var int    buySweepBar    = na
+var bool   bullMSSActive  = false
+var bool   bearMSSActive  = false
+var bool   longTaken      = false
+var bool   shortTaken     = false
+var string activeSession  = "—"
+
+// Target derived from the specific level swept
+var float  longTargetLevel  = na   // opposing high of swept low
+var float  shortTargetLevel = na   // opposing low  of swept high
+
+// CISD + FVG state (second entry path)
+var bool  bullCISDActive  = false
+var float cisdBullFvgLo   = na
+var float cisdBullFvgHi   = na
+var bool  bearCISDActive  = false
+var float cisdBearFvgLo   = na
+var float cisdBearFvgHi   = na
+
+f_resetState() =>
+    sellsideSwept  := false
+    buysideSwept   := false
+    sellSweepBar   := na
+    buySweepBar    := na
+    bullMSSActive  := false
+    bearMSSActive  := false
+    longTaken      := false
+    shortTaken     := false
+    longTargetLevel  := na
+    shortTargetLevel := na
+    bullIfvgActive   := false
+    bullIfvgLo       := na
+    bullIfvgHi       := na
+    bullIfvgBreakBar := na
+    bearIfvgActive   := false
+    bearIfvgLo       := na
+    bearIfvgHi       := na
+    bearIfvgBreakBar := na
+    latestBullFvgLo  := na
+    latestBullFvgHi  := na
+    latestBearFvgLo  := na
+    latestBearFvgHi  := na
+    bullCISDActive   := false
+    cisdBullFvgLo    := na
+    cisdBullFvgHi    := na
+    bearCISDActive   := false
+    cisdBearFvgLo    := na
+    cisdBearFvgHi    := na
+
+if asiaEntryStart
+    f_resetState()
+    activeSession := "Asia"
+
+if londonEntryStart
+    f_resetState()
+    activeSession := "London"
+
+if nyEntryStart
+    f_resetState()
+    activeSession := "NY"
+
+//====================================================
+// SESSION BACKGROUNDS
+//====================================================
+bgcolor(showSessionBg and inAsia       ? color.new(color.blue,   92) : na)
+bgcolor(showSessionBg and inLondon     ? color.new(color.purple, 93) : na)
+bgcolor(showSessionBg and inPremarket  ? color.new(color.gray,   88) : na)
+bgcolor(showSessionBg and inNYEntry    ? color.new(color.silver, 84) : na)
+
+//====================================================
+// SESSION OPEN MARKERS
+//====================================================
+if showSessionOpens and asiaStart
+    label.new(bar_index, low, "Asia\nOpen",   style=label.style_label_up, color=color.new(color.blue,   20), textcolor=color.white, size=size.tiny)
+if showSessionOpens and londonStart
+    label.new(bar_index, low, "London\nOpen", style=label.style_label_up, color=color.new(color.purple, 20), textcolor=color.white, size=size.tiny)
+if showSessionOpens and premarketStart
+    label.new(bar_index, low, "Pre\nOpen",    style=label.style_label_up, color=color.new(color.gray,   20), textcolor=color.white, size=size.tiny)
+if showSessionOpens and nyEntryStart
+    label.new(bar_index, low, "NY\nOpen",     style=label.style_label_up, color=color.new(color.silver, 30), textcolor=color.black, size=size.tiny)
+
+//====================================================
+// SESSION LEVELS
+//====================================================
+plot(showLevels   ? asiaHigh   : na, "Asia High",      color=color.new(color.blue,    10), linewidth=1, style=plot.style_linebr)
+plot(showLevels   ? asiaLow    : na, "Asia Low",       color=color.new(color.blue,    10), linewidth=1, style=plot.style_linebr)
+plot(showLevels   ? londonHigh : na, "London High",    color=color.new(color.purple,  30), linewidth=1, style=plot.style_linebr)
+plot(showLevels   ? londonLow  : na, "London Low",     color=color.new(color.purple,  30), linewidth=1, style=plot.style_linebr)
+plot(showLevels   ? preHigh    : na, "Premarket High", color=color.new(color.orange,  10), linewidth=1, style=plot.style_linebr)
+plot(showLevels   ? preLow     : na, "Premarket Low",  color=color.new(color.orange,  10), linewidth=1, style=plot.style_linebr)
+plot(showPDLevels ? pdHigh     : na, "Prev Day High",  color=color.new(color.fuchsia, 10), linewidth=1, style=plot.style_linebr)
+plot(showPDLevels ? pdLow      : na, "Prev Day Low",   color=color.new(color.fuchsia, 10), linewidth=1, style=plot.style_linebr)
+
+//====================================================
+// HTF BIAS
+//====================================================
+htf5Close  = request.security(syminfo.tickerid, "5",  close)
+htf5Ema20  = request.security(syminfo.tickerid, "5",  ta.ema(close, 20))
+htf5Ema50  = request.security(syminfo.tickerid, "5",  ta.ema(close, 50))
+htf15Close = request.security(syminfo.tickerid, "15", close)
+htf15Ema20 = request.security(syminfo.tickerid, "15", ta.ema(close, 20))
+htf15Ema50 = request.security(syminfo.tickerid, "15", ta.ema(close, 50))
+
+bullBias = htf5Close > htf5Ema20 and htf15Close > htf15Ema20 and htf5Ema20 > htf5Ema50 and htf15Ema20 > htf15Ema50
+bearBias = htf5Close < htf5Ema20 and htf15Close < htf15Ema20 and htf5Ema20 < htf5Ema50 and htf15Ema20 < htf15Ema50
+biasPass = not requireHTFBias or (bullBias or bearBias)
+
+//====================================================
+// SWEEP DETECTION — each session watches its prior session
+//====================================================
+
+// Asia entry (1900–2030): sweep prev day H/L
+// Sweep = wick through the level — close direction does not matter
+asiaSellSweep = inAsiaEntry and not na(pdLow)   and low  < pdLow
+asiaBuySweep  = inAsiaEntry and not na(pdHigh)  and high > pdHigh
+
+// London entry (0200–0330): sweep Asia H/L
+londonSellSweep = inLondonEntry and not na(asiaLow)  and low  < asiaLow
+londonBuySweep  = inLondonEntry and not na(asiaHigh) and high > asiaHigh
+
+// NY entry (0930–1100): sweep London H/L or Premarket H/L (whichever fires)
+nySellSweepLondon = inNYEntry and not na(londonLow)  and low  < londonLow
+nySellSweepPre    = inNYEntry and not na(preLow)     and low  < preLow
+nyBuySweepLondon  = inNYEntry and not na(londonHigh) and high > londonHigh
+nyBuySweepPre     = inNYEntry and not na(preHigh)    and high > preHigh
+
+anySellSweep = asiaSellSweep or londonSellSweep or nySellSweepLondon or nySellSweepPre
+anyBuySweep  = asiaBuySweep  or londonBuySweep  or nyBuySweepLondon  or nyBuySweepPre
+
+// On sweep: record which level was swept and set the opposing side as target
+if asiaSellSweep and not sellsideSwept
+    sellsideSwept   := true
+    sellSweepBar    := bar_index
+    longTargetLevel := pdHigh      // target = opposing PD high
+    buysideSwept    := false
+
+if asiaBuySweep and not buysideSwept
+    buysideSwept     := true
+    buySweepBar      := bar_index
+    shortTargetLevel := pdLow      // target = opposing PD low
+    sellsideSwept    := false
+
+if londonSellSweep and not sellsideSwept
+    sellsideSwept   := true
+    sellSweepBar    := bar_index
+    longTargetLevel := asiaHigh    // target = Asia high (buyside liquidity above)
+    buysideSwept    := false
+
+if londonBuySweep and not buysideSwept
+    buysideSwept     := true
+    buySweepBar      := bar_index
+    shortTargetLevel := asiaLow    // target = Asia low (sellside liquidity below)
+    sellsideSwept    := false
+
+if (nySellSweepLondon or nySellSweepPre) and not sellsideSwept
+    sellsideSwept   := true
+    sellSweepBar    := bar_index
+    // target = high of the specific level swept — prefer London, fallback to Pre
+    longTargetLevel := nySellSweepLondon ? londonHigh : preHigh
+    buysideSwept    := false
+
+if (nyBuySweepLondon or nyBuySweepPre) and not buysideSwept
+    buysideSwept     := true
+    buySweepBar      := bar_index
+    shortTargetLevel := nyBuySweepLondon ? londonLow : preLow
+    sellsideSwept    := false
+
+plotshape(showSweepLabels and anySellSweep, title="Sellside Sweep",
+          style=shape.labelup,   location=location.belowbar, text="SSL",
+          color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+plotshape(showSweepLabels and anyBuySweep,  title="Buyside Sweep",
+          style=shape.labeldown, location=location.abovebar, text="BSL",
+          color=color.new(color.red,   0), textcolor=color.white, size=size.tiny)
+
+//====================================================
+// DISPLACEMENT CANDLE
+//====================================================
+candleBody       = math.abs(close - open)
+bullDisplacement = candleBody > atr * displaceMult and close > open
+bearDisplacement = candleBody > atr * displaceMult and close < open
+
+//====================================================
+// MARKET STRUCTURE SHIFT (MSS)
+//====================================================
+if sellsideSwept and not na(sellSweepBar) and bar_index > sellSweepBar and not na(lastSwingHigh) and close > lastSwingHigh
+    if not bullMSSActive
+        bullMSSActive := true
+        if showMSSLabels
+            label.new(bar_index, high, "MSS↑",
+                      style=label.style_label_down,
+                      color=color.new(color.green, 10), textcolor=color.white, size=size.tiny)
+
+if buysideSwept and not na(buySweepBar) and bar_index > buySweepBar and not na(lastSwingLow) and close < lastSwingLow
+    if not bearMSSActive
+        bearMSSActive := true
+        if showMSSLabels
+            label.new(bar_index, low, "MSS↓",
+                      style=label.style_label_up,
+                      color=color.new(color.red, 10), textcolor=color.white, size=size.tiny)
+
+//====================================================
+// CISD DETECTION
+// Change In State of Delivery: candle closes through the body of the prior
+// opposite candle, signaling a shift in order flow direction.
+// Bullish CISD: close > prior candle's open  (prior candle was bearish)
+// Bearish CISD: close < prior candle's open  (prior candle was bullish)
+//====================================================
+bullCISD = sellsideSwept and not na(sellSweepBar) and bar_index > sellSweepBar and close > open[1] and open[1] > close[1]
+bearCISD = buysideSwept  and not na(buySweepBar)  and bar_index > buySweepBar  and close < open[1] and open[1] < close[1]
+
+if bullCISD and not bullCISDActive
+    bullCISDActive := true
+    bearCISDActive := false
+    cisdBearFvgLo  := na
+    cisdBearFvgHi  := na
+
+if bearCISD and not bearCISDActive
+    bearCISDActive := true
+    bullCISDActive := false
+    cisdBullFvgLo  := na
+    cisdBullFvgHi  := na
+
+//====================================================
+// FVG DETECTION
+//====================================================
+bullishFVG = low > high[2]
+bearishFVG = high < low[2]
+
+if bullishFVG and inAnyEntry
+    latestBullFvgLo := high[2]
+    latestBullFvgHi := low
+    // Capture FVG paired with a bullish CISD
+    if bullCISDActive
+        cisdBullFvgLo := high[2]
+        cisdBullFvgHi := low
+
+if bearishFVG and inAnyEntry
+    latestBearFvgLo := high
+    latestBearFvgHi := low[2]
+    // Capture FVG paired with a bearish CISD
+    if bearCISDActive
+        cisdBearFvgLo := high
+        cisdBearFvgHi := low[2]
+
+if showRawFVGs and bullishFVG and inAnyEntry
+    box.new(bar_index - 2, latestBullFvgHi, bar_index + 1, latestBullFvgLo,
+            bgcolor=color.new(color.green,  85), border_color=color.new(color.green,  0))
+
+if showRawFVGs and bearishFVG and inAnyEntry
+    box.new(bar_index - 2, latestBearFvgHi, bar_index + 1, latestBearFvgLo,
+            bgcolor=color.new(color.orange, 85), border_color=color.new(color.orange, 0))
+
+//====================================================
+// IFVG ACTIVATION
+//====================================================
+bullDispPass = requireDisplace ? bullDisplacement : true
+bearDispPass = requireDisplace ? bearDisplacement : true
+bullMSSPass  = requireMSS      ? bullMSSActive    : true
+bearMSSPass  = requireMSS      ? bearMSSActive    : true
+
+bullInversionBreak = sellsideSwept and not na(sellSweepBar) and bar_index > sellSweepBar and not na(latestBearFvgHi) and close > latestBearFvgHi and bullDispPass and bullMSSPass
+if bullInversionBreak
+    bullIfvgActive   := true
+    bullIfvgLo       := latestBearFvgLo
+    bullIfvgHi       := latestBearFvgHi
+    bullIfvgBreakBar := bar_index
+    bearIfvgActive   := false
+    bearIfvgLo       := na
+    bearIfvgHi       := na
+    bearIfvgBreakBar := na
+    // Draw the inverted FVG zone immediately so it's visible before the retest
+    box.new(bar_index, bullIfvgHi, bar_index + ifvgExpiryBars, bullIfvgLo,
+            bgcolor=color.new(color.orange, 80), border_color=color.new(color.orange, 30),
+            border_style=line.style_dashed)
+
+bearInversionBreak = buysideSwept and not na(buySweepBar) and bar_index > buySweepBar and not na(latestBullFvgLo) and close < latestBullFvgLo and bearDispPass and bearMSSPass
+if bearInversionBreak
+    bearIfvgActive   := true
+    bearIfvgLo       := latestBullFvgLo
+    bearIfvgHi       := latestBullFvgHi
+    bearIfvgBreakBar := bar_index
+    bullIfvgActive   := false
+    bullIfvgLo       := na
+    bullIfvgHi       := na
+    bullIfvgBreakBar := na
+    // Draw the inverted FVG zone immediately so it's visible before the retest
+    box.new(bar_index, bearIfvgHi, bar_index + ifvgExpiryBars, bearIfvgLo,
+            bgcolor=color.new(color.orange, 80), border_color=color.new(color.orange, 30),
+            border_style=line.style_dashed)
+
+//====================================================
+// EXPIRE STALE IFVGS
+//====================================================
+if bullIfvgActive and not na(bullIfvgBreakBar) and bar_index - bullIfvgBreakBar > ifvgExpiryBars
+    bullIfvgActive   := false
+    bullIfvgLo       := na
+    bullIfvgHi       := na
+    bullIfvgBreakBar := na
+
+if bearIfvgActive and not na(bearIfvgBreakBar) and bar_index - bearIfvgBreakBar > ifvgExpiryBars
+    bearIfvgActive   := false
+    bearIfvgLo       := na
+    bearIfvgHi       := na
+    bearIfvgBreakBar := na
+
+//====================================================
+// FRESH REACTION FVG FILTER
+//====================================================
+bullReactionPass = requireFreshFVG ? ta.barssince(bullishFVG) <= reactionLookback : true
+bearReactionPass = requireFreshFVG ? ta.barssince(bearishFVG) <= reactionLookback : true
+
+//====================================================
+// RETEST — IFVG path
+//====================================================
+ifvgLongRetest  = bullIfvgActive and bar_index > nz(bullIfvgBreakBar, bar_index) and low <= bullIfvgHi and high >= bullIfvgLo and close > bullIfvgHi
+ifvgShortRetest = bearIfvgActive and bar_index > nz(bearIfvgBreakBar, bar_index) and high >= bearIfvgLo and low <= bearIfvgHi and close < bearIfvgLo
+
+//====================================================
+// RETEST — CISD + FVG path
+//====================================================
+cisdLongRetest  = bullCISDActive and not na(cisdBullFvgHi) and low <= cisdBullFvgHi and high >= cisdBullFvgLo and close > cisdBullFvgHi
+cisdShortRetest = bearCISDActive and not na(cisdBearFvgLo) and high >= cisdBearFvgLo and low <= cisdBearFvgHi and close < cisdBearFvgLo
+
+longRetest  = ifvgLongRetest  or cisdLongRetest
+shortRetest = ifvgShortRetest or cisdShortRetest
+
+//====================================================
+// FINAL ENTRY CONDITIONS
+//====================================================
+bullBiasPass = requireHTFBias ? bullBias : true
+bearBiasPass = requireHTFBias ? bearBias : true
+
+longSignal  = inAnyEntry and sellsideSwept and bullBiasPass and bullReactionPass and longRetest  and not longTaken  and not na(lastSwingLow)  and not na(longTargetLevel)
+shortSignal = inAnyEntry and buysideSwept  and bearBiasPass and bearReactionPass and shortRetest and not shortTaken and not na(lastSwingHigh) and not na(shortTargetLevel)
+
+//====================================================
+// ENTRY / STOP / R:R
+// Entry is at the FVG level that triggered — IFVG takes priority over CISD+FVG
+//====================================================
+longEntry  = ifvgLongRetest  ? bullIfvgHi    : cisdBullFvgHi   // top of whichever FVG was retested
+longStop   = lastSwingLow                                        // nearest swing low below
+longTarget = longTargetLevel
+
+shortEntry  = ifvgShortRetest ? bearIfvgLo   : cisdBearFvgLo   // bottom of whichever FVG was retested
+shortStop   = lastSwingHigh                                      // nearest swing high above
+shortTarget = shortTargetLevel
+
+longRR  = longEntry  != longStop  ? math.round((longTarget  - longEntry)  / (longEntry  - longStop),  1) : na
+shortRR = shortEntry != shortStop ? math.round((shortEntry  - shortTarget) / (shortStop  - shortEntry), 1) : na
+
+//====================================================
+// TRADE VISUALS
+//====================================================
+var line  activeEntryLine   = na
+var line  activeStopLine    = na
+var line  activeTargetLine  = na
+var label activeEntryLabel  = na
+var label activeStopLabel   = na
+var label activeTargetLabel = na
+
+f_clearDrawings() =>
+    if not na(activeEntryLine)   line.delete(activeEntryLine)
+    if not na(activeStopLine)    line.delete(activeStopLine)
+    if not na(activeTargetLine)  line.delete(activeTargetLine)
+    if not na(activeEntryLabel)  label.delete(activeEntryLabel)
+    if not na(activeStopLabel)   label.delete(activeStopLabel)
+    if not na(activeTargetLabel) label.delete(activeTargetLabel)
+
+if longSignal and showTradeVisuals
+    f_clearDrawings()
+    rrStr = not na(longRR) ? "Entry [" + str.tostring(longRR) + "R]" : "Entry"
+    activeEntryLine   := line.new(bar_index, longEntry,  bar_index + lineExtendBars, longEntry,  color=entryLineColor,  width=2)
+    activeStopLine    := line.new(bar_index, longStop,   bar_index + lineExtendBars, longStop,   color=stopLineColor,   width=2)
+    activeTargetLine  := line.new(bar_index, longTarget, bar_index + lineExtendBars, longTarget, color=targetLineColor, width=2)
+    activeEntryLabel  := label.new(bar_index + lineExtendBars, longEntry,  rrStr,    style=label.style_label_left, textcolor=color.white, color=color.new(entryLineColor,  20))
+    activeStopLabel   := label.new(bar_index + lineExtendBars, longStop,   "Stop",   style=label.style_label_left, textcolor=color.white, color=color.new(stopLineColor,   20))
+    activeTargetLabel := label.new(bar_index + lineExtendBars, longTarget, "Target", style=label.style_label_left, textcolor=color.white, color=color.new(targetLineColor, 20))
+    longTaken := true
+
+if shortSignal and showTradeVisuals
+    f_clearDrawings()
+    rrStr = not na(shortRR) ? "Entry [" + str.tostring(shortRR) + "R]" : "Entry"
+    activeEntryLine   := line.new(bar_index, shortEntry,  bar_index + lineExtendBars, shortEntry,  color=entryLineColor,  width=2)
+    activeStopLine    := line.new(bar_index, shortStop,   bar_index + lineExtendBars, shortStop,   color=stopLineColor,   width=2)
+    activeTargetLine  := line.new(bar_index, shortTarget, bar_index + lineExtendBars, shortTarget, color=targetLineColor, width=2)
+    activeEntryLabel  := label.new(bar_index + lineExtendBars, shortEntry,  rrStr,    style=label.style_label_left, textcolor=color.white, color=color.new(entryLineColor,  20))
+    activeStopLabel   := label.new(bar_index + lineExtendBars, shortStop,   "Stop",   style=label.style_label_left, textcolor=color.white, color=color.new(stopLineColor,   20))
+    activeTargetLabel := label.new(bar_index + lineExtendBars, shortTarget, "Target", style=label.style_label_left, textcolor=color.white, color=color.new(targetLineColor, 20))
+    shortTaken := true
+
+plotshape(longSignal,  title="Long Entry",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.teal, 0), size=size.small, text="LONG")
+plotshape(shortSignal, title="Short Entry", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,  0), size=size.small, text="SHORT")
+
+//====================================================
+// DASHBOARD
+//====================================================
+if showDashboard
+    var table dash = table.new(position.top_right, 2, 9,
+                                bgcolor=color.new(color.black, 70),
+                                border_width=1, border_color=color.new(color.gray, 50),
+                                frame_width=1,  frame_color=color.new(color.gray, 30))
+
+    offClr      = color.new(color.gray, 50)
+    hdrClr      = color.new(color.gray, 20)
+    sessionNow  = inNYEntry ? "NY Entry" : inLondonEntry ? "London Entry" : inAsiaEntry ? "Asia Entry" : inPremarket ? "Premarket" : inLondon ? "London" : inAsia ? "Asia" : "—"
+    biasStr     = bullBias ? "BULL" : bearBias ? "BEAR" : "NEUTRAL"
+    biasClr     = bullBias ? color.new(color.teal, 0) : bearBias ? color.new(color.red, 0) : offClr
+    sweepStr    = sellsideSwept ? "SSL ✓" : buysideSwept ? "BSL ✓" : "None"
+    sweepClr    = sellsideSwept ? color.new(color.green, 0) : buysideSwept ? color.new(color.red, 0) : offClr
+    mssStr      = bullMSSActive ? "Bull ✓" : bearMSSActive ? "Bear ✓" : "None"
+    mssClr      = bullMSSActive ? color.new(color.green, 0) : bearMSSActive ? color.new(color.red, 0) : offClr
+    ifvgStr     = bullIfvgActive ? "Bull" : bearIfvgActive ? "Bear" : "None"
+    ifvgClr     = bullIfvgActive ? color.new(color.green, 0) : bearIfvgActive ? color.new(color.red, 0) : offClr
+    tgtStr      = sellsideSwept and not na(longTargetLevel) ? str.tostring(longTargetLevel, "#.##") : buysideSwept and not na(shortTargetLevel) ? str.tostring(shortTargetLevel, "#.##") : "—"
+
+    table.cell(dash, 0, 0, "SESSION",  text_color=hdrClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 1, 0, sessionNow, text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 0, 1, "MODEL",    text_color=hdrClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 1, 1, activeSession, text_color=color.white, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 0, 2, "BIAS",     text_color=hdrClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 1, 2, biasStr,    text_color=biasClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 0, 3, "SWEEP",    text_color=hdrClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 1, 3, sweepStr,   text_color=sweepClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 0, 4, "MSS",      text_color=hdrClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 1, 4, mssStr,     text_color=mssClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 0, 5, "IFVG",     text_color=hdrClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 1, 5, ifvgStr,    text_color=ifvgClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 0, 6, "TARGET",   text_color=hdrClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 1, 6, tgtStr,     text_color=color.new(color.teal, 0), text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 0, 7, "PDH",      text_color=hdrClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 1, 7, str.tostring(pdHigh, "#.##"), text_color=color.new(color.fuchsia, 10), text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 0, 8, "PDL",      text_color=hdrClr, text_size=size.tiny, bgcolor=color.new(color.black, 70))
+    table.cell(dash, 1, 8, str.tostring(pdLow,  "#.##"), text_color=color.new(color.fuchsia, 10), text_size=size.tiny, bgcolor=color.new(color.black, 70))
+
+//====================================================
+// ALERTS
+//====================================================
+alertcondition(longSignal,  title="Long Entry",  message="NQ Long: sweep + bullish IFVG retest")
+alertcondition(shortSignal, title="Short Entry", message="NQ Short: sweep + bearish IFVG retest")
+
+if longSignal
+    alert('{"symbol":"' + syminfo.ticker
+        + '","session":"'   + activeSession
+        + '","direction":"long"'
+        + ',"entry":'       + str.tostring(longEntry,  "#.##")
+        + ',"stop":'        + str.tostring(longStop,   "#.##")
+        + ',"target":'      + str.tostring(longTarget, "#.##")
+        + ',"rr":'          + str.tostring(nz(longRR,  0), "#.#")
+        + '}', alert.freq_once_per_bar)
+
+if shortSignal
+    alert('{"symbol":"' + syminfo.ticker
+        + '","session":"'   + activeSession
+        + '","direction":"short"'
+        + ',"entry":'       + str.tostring(shortEntry,  "#.##")
+        + ',"stop":'        + str.tostring(shortStop,   "#.##")
+        + ',"target":'      + str.tostring(shortTarget, "#.##")
+        + ',"rr":'          + str.tostring(nz(shortRR,  0), "#.#")
+        + '}', alert.freq_once_per_bar)
