@@ -200,15 +200,15 @@ var bool  bearCISDActive  = false
 var float cisdBearFvgLo   = na
 var float cisdBearFvgHi   = na
 
-f_resetState() =>
-    sellsideSwept  := false
-    buysideSwept   := false
-    sellSweepBar   := na
-    buySweepBar    := na
-    bullMSSActive  := false
-    bearMSSActive  := false
-    longTaken      := false
-    shortTaken     := false
+if asiaEntryStart or londonEntryStart or nyEntryStart
+    sellsideSwept    := false
+    buysideSwept     := false
+    sellSweepBar     := na
+    buySweepBar      := na
+    bullMSSActive    := false
+    bearMSSActive    := false
+    longTaken        := false
+    shortTaken       := false
     longTargetLevel  := na
     shortTargetLevel := na
     bullIfvgActive   := false
@@ -229,18 +229,7 @@ f_resetState() =>
     bearCISDActive   := false
     cisdBearFvgLo    := na
     cisdBearFvgHi    := na
-
-if asiaEntryStart
-    f_resetState()
-    activeSession := "Asia"
-
-if londonEntryStart
-    f_resetState()
-    activeSession := "London"
-
-if nyEntryStart
-    f_resetState()
-    activeSession := "NY"
+    activeSession    := asiaEntryStart ? "Asia" : londonEntryStart ? "London" : "NY"
 
 
 //====================================================
@@ -427,8 +416,7 @@ if bullInversionBreak
     bearIfvgBreakBar := na
     // Draw the inverted FVG zone immediately so it's visible before the retest
     box.new(bar_index, bullIfvgHi, bar_index + ifvgExpiryBars, bullIfvgLo,
-            bgcolor=color.new(color.orange, 80), border_color=color.new(color.orange, 30),
-            border_style=line.style_dashed)
+            bgcolor=color.new(color.orange, 80), border_color=color.new(color.orange, 30))
 
 bearInversionBreak = buysideSwept and not na(buySweepBar) and bar_index > buySweepBar and not na(latestBullFvgLo) and close < latestBullFvgLo and bearDispPass and bearMSSPass
 if bearInversionBreak
@@ -442,8 +430,7 @@ if bearInversionBreak
     bullIfvgBreakBar := na
     // Draw the inverted FVG zone immediately so it's visible before the retest
     box.new(bar_index, bearIfvgHi, bar_index + ifvgExpiryBars, bearIfvgLo,
-            bgcolor=color.new(color.orange, 80), border_color=color.new(color.orange, 30),
-            border_style=line.style_dashed)
+            bgcolor=color.new(color.orange, 80), border_color=color.new(color.orange, 30))
 
 //====================================================
 // EXPIRE STALE IFVGS
@@ -515,16 +502,13 @@ var label activeEntryLabel  = na
 var label activeStopLabel   = na
 var label activeTargetLabel = na
 
-f_clearDrawings() =>
-    if not na(activeEntryLine)   line.delete(activeEntryLine)
-    if not na(activeStopLine)    line.delete(activeStopLine)
-    if not na(activeTargetLine)  line.delete(activeTargetLine)
-    if not na(activeEntryLabel)  label.delete(activeEntryLabel)
-    if not na(activeStopLabel)   label.delete(activeStopLabel)
-    if not na(activeTargetLabel) label.delete(activeTargetLabel)
-
-if longSignal and showTradeVisuals
-    f_clearDrawings()
+if longSignal
+    line.delete(activeEntryLine)
+    line.delete(activeStopLine)
+    line.delete(activeTargetLine)
+    label.delete(activeEntryLabel)
+    label.delete(activeStopLabel)
+    label.delete(activeTargetLabel)
     rrStr = not na(longRR) ? "Entry [" + str.tostring(longRR) + "R]" : "Entry"
     activeEntryLine   := line.new(bar_index, longEntry,  bar_index + lineExtendBars, longEntry,  color=entryLineColor,  width=2)
     activeStopLine    := line.new(bar_index, longStop,   bar_index + lineExtendBars, longStop,   color=stopLineColor,   width=2)
@@ -534,8 +518,13 @@ if longSignal and showTradeVisuals
     activeTargetLabel := label.new(bar_index + lineExtendBars, longTarget, "Target", style=label.style_label_left, textcolor=color.white, color=color.new(targetLineColor, 20))
     longTaken := true
 
-if shortSignal and showTradeVisuals
-    f_clearDrawings()
+if shortSignal
+    line.delete(activeEntryLine)
+    line.delete(activeStopLine)
+    line.delete(activeTargetLine)
+    label.delete(activeEntryLabel)
+    label.delete(activeStopLabel)
+    label.delete(activeTargetLabel)
     rrStr = not na(shortRR) ? "Entry [" + str.tostring(shortRR) + "R]" : "Entry"
     activeEntryLine   := line.new(bar_index, shortEntry,  bar_index + lineExtendBars, shortEntry,  color=entryLineColor,  width=2)
     activeStopLine    := line.new(bar_index, shortStop,   bar_index + lineExtendBars, shortStop,   color=stopLineColor,   width=2)
