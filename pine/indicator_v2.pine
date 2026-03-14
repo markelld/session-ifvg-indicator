@@ -14,11 +14,11 @@ extBars   = input.int(5,  "Box Extend Bars",    minval=1,  maxval=20,  group=grp
 rrReward  = input.float(1.0, "Reward",          minval=0.1, step=0.1,  group=grpStrat)
 rrRisk    = input.float(1.0, "Risk",            minval=0.1, step=0.1,  group=grpStrat)
 
-bullColor  = input.color(#089981,                "Bull",       group=grpColor)
-bearColor  = input.color(#f23645,                "Bear",       group=grpColor)
-midColor   = input.color(#787b86,                "Mid",        group=grpColor)
-riskColor  = input.color(color.new(#787b86, 80), "Risk Box",   group=grpColor)
-rewardColor = input.color(color.new(#5b9cf6, 80),"Reward Box", group=grpColor)
+bullColor   = input.color(#089981,                "Bull",       group=grpColor)
+bearColor   = input.color(#f23645,                "Bear",       group=grpColor)
+midColor    = input.color(#787b86,                "Mid",        group=grpColor)
+riskColor   = input.color(color.new(#787b86, 80), "Risk Box",   group=grpColor)
+rewardColor = input.color(color.new(#5b9cf6, 80), "Reward Box", group=grpColor)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SESSION DETECTION
@@ -48,7 +48,6 @@ anyEStart    = asiaEStart or londonEStart or nyEStart
 // ─────────────────────────────────────────────────────────────────────────────
 pdHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
 pdLow  = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_on)
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SESSION H/L TRACKING
@@ -103,27 +102,27 @@ var bool  sweptBuy    = false
 var float tgtLong     = na
 var float tgtShort    = na
 
-// FVG captured post-sweep (bearish FVG after sell sweep, bullish FVG after buy sweep)
-var float fvgBearLo   = na      // lower price bound
-var float fvgBearHi   = na      // upper price bound
-var int   fvgBearBar  = na      // bar index when FVG was detected
+// FVG captured post-sweep
+var float fvgBearLo   = na
+var float fvgBearHi   = na
+var int   fvgBearBar  = na
 
 var float fvgBullLo   = na
 var float fvgBullHi   = na
 var int   fvgBullBar  = na
 
-// Bullish IFVG (inverted from a bearish FVG, after sell sweep)
+// Bullish IFVG (inverted from bearish FVG, after sell sweep)
 var bool  bullIFVG     = false
 var float bullIFVGlo   = na
 var float bullIFVGhi   = na
 var int   bullIFVGbar  = na
-var box   bullIFVGpre  = na     // pre-inversion box (bearColor — original FVG color)
-var box   bullIFVGpost = na     // post-inversion live box (bullColor — inverted)
-var line  bullIFVGlT   = na     // dashed line — top of zone
-var line  bullIFVGlB   = na     // dashed line — bottom of zone
-var line  bullIFVGlM   = na     // dashed midline
+var box   bullIFVGpre  = na
+var box   bullIFVGpost = na
+var line  bullIFVGlT   = na
+var line  bullIFVGlB   = na
+var line  bullIFVGlM   = na
 
-// Bearish IFVG (inverted from a bullish FVG, after buy sweep)
+// Bearish IFVG (inverted from bullish FVG, after buy sweep)
 var bool  bearIFVG     = false
 var float bearIFVGlo   = na
 var float bearIFVGhi   = na
@@ -134,7 +133,24 @@ var line  bearIFVGlT   = na
 var line  bearIFVGlB   = na
 var line  bearIFVGlM   = na
 
-// Risk/reward boxes (extend each bar after entry)
+// Breaker Blocks — first displacement candle after sweep
+// Bullish breaker: first bearish candle after sell sweep (displacement down → price rallies back into it)
+// Bearish breaker: first bullish candle after buy sweep (displacement up → price drops back into it)
+var float bbBullHi     = na
+var float bbBullLo     = na
+var int   bbBullBar    = na
+var bool  bbBullActive = false
+var box   bbBullBox    = na
+var line  bbBullLM     = na
+
+var float bbBearHi     = na
+var float bbBearLo     = na
+var int   bbBearBar    = na
+var bool  bbBearActive = false
+var box   bbBearBox    = na
+var line  bbBearLM     = na
+
+// Risk/reward boxes
 var box   riskBox      = na
 var box   rewardBox    = na
 
@@ -162,6 +178,14 @@ if anyEStart
     bearIFVGlo   := na
     bearIFVGhi   := na
     bearIFVGbar  := na
+    bbBullHi     := na
+    bbBullLo     := na
+    bbBullBar    := na
+    bbBullActive := false
+    bbBearHi     := na
+    bbBearLo     := na
+    bbBearBar    := na
+    bbBearActive := false
     longTaken    := false
     shortTaken   := false
     sess         := asiaEStart ? "Asia" : londonEStart ? "London" : "NY"
@@ -175,6 +199,10 @@ if anyEStart
     line.delete(bearIFVGlT)
     line.delete(bearIFVGlB)
     line.delete(bearIFVGlM)
+    box.delete(bbBullBox)
+    box.delete(bbBearBox)
+    line.delete(bbBullLM)
+    line.delete(bbBearLM)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REFERENCE LEVELS — prior session H/L for each window
@@ -206,13 +234,10 @@ if buySweep
 // ─────────────────────────────────────────────────────────────────────────────
 // FVG DETECTION — only after a sweep
 //
-// Bearish FVG (gap down):  high < low[2]
-//   zone: low price = high (current), high price = low[2] (2 bars ago)
+// Bearish FVG (gap down):  high < low[2]  → zone: [high, low[2]]
+// Bullish FVG (gap up):    low > high[2]  → zone: [high[2], low]
 //
-// Bullish FVG (gap up):    low > high[2]
-//   zone: low price = high[2] (2 bars ago), high price = low (current)
-//
-// After sell sweep → track bearish FVGs (displacement that created the sweep)
+// After sell sweep → track bearish FVGs (displacement move)
 // After buy sweep  → track bullish FVGs
 // ─────────────────────────────────────────────────────────────────────────────
 bearFVG = high < low[2]
@@ -230,14 +255,52 @@ if inAnyE
         fvgBullBar := bar_index
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BREAKER BLOCKS — first displacement candle after sweep
+//
+// Bullish breaker: first bearish candle after sell sweep
+//   → price sweeps low, displaces down, then rallies back into that candle's zone
+//   → entry: open in upper half of zone, close above top
+//
+// Bearish breaker: first bullish candle after buy sweep
+//   → price sweeps high, displaces up, then drops back into that candle's zone
+//   → entry: open in lower half of zone, close below bottom
+// ─────────────────────────────────────────────────────────────────────────────
+if inAnyE and sweptSell and not bbBullActive and close < open
+    bbBullHi     := high
+    bbBullLo     := low
+    bbBullBar    := bar_index
+    bbBullActive := true
+    box.delete(bbBullBox)
+    line.delete(bbBullLM)
+    _bbBullMid    = (high + low) / 2
+    bbBullBox    := box.new(bar_index, high, bar_index + ifvgBars, low, bgcolor=color.new(bullColor, 85), border_color=color.new(bullColor, 50), border_width=1)
+    bbBullLM     := line.new(bar_index, _bbBullMid, bar_index + ifvgBars, _bbBullMid, color=color.new(midColor, 50), style=line.style_dashed, width=1)
+
+if inAnyE and sweptBuy and not bbBearActive and close > open
+    bbBearHi     := high
+    bbBearLo     := low
+    bbBearBar    := bar_index
+    bbBearActive := true
+    box.delete(bbBearBox)
+    line.delete(bbBearLM)
+    _bbBearMid    = (high + low) / 2
+    bbBearBox    := box.new(bar_index, high, bar_index + ifvgBars, low, bgcolor=color.new(bearColor, 85), border_color=color.new(bearColor, 50), border_width=1)
+    bbBearLM     := line.new(bar_index, _bbBearMid, bar_index + ifvgBars, _bbBearMid, color=color.new(midColor, 50), style=line.style_dashed, width=1)
+
+// Expire stale breaker blocks
+if bbBullActive and not na(bbBullBar) and bar_index - bbBullBar > ifvgBars
+    bbBullActive := false
+if bbBearActive and not na(bbBearBar) and bar_index - bbBearBar > ifvgBars
+    bbBearActive := false
+
+// ─────────────────────────────────────────────────────────────────────────────
 // IFVG ACTIVATION
 //
 // Bullish IFVG: after sell sweep, price closes ABOVE top of bearish FVG
-//   → two-part box:  bearColor (original FVG period) + bullColor (inverted/live)
-//   → dashed lines at top, bottom, mid extending forward
+//   → two-part box: bearColor (original FVG period) + bullColor (inverted/live)
 //
 // Bearish IFVG: after buy sweep, price closes BELOW bottom of bullish FVG
-//   → two-part box:  bullColor (original) + bearColor (inverted/live)
+//   → two-part box: bullColor (original) + bearColor (inverted/live)
 // ─────────────────────────────────────────────────────────────────────────────
 bullIFVGbreak = inAnyE and sweptSell and not na(fvgBearHi) and close > fvgBearHi and not bullIFVG
 bearIFVGbreak = inAnyE and sweptBuy  and not na(fvgBullLo) and close < fvgBullLo and not bearIFVG
@@ -250,28 +313,24 @@ if bullIFVGbreak
     bearIFVG    := false
     bearIFVGlo  := na
     bearIFVGhi  := na
-    // Clean up prior bear zone
     box.delete(bearIFVGpre)
     box.delete(bearIFVGpost)
     line.delete(bearIFVGlT)
     line.delete(bearIFVGlB)
     line.delete(bearIFVGlM)
-    // Clean up prior bull zone
     box.delete(bullIFVGpre)
     box.delete(bullIFVGpost)
     line.delete(bullIFVGlT)
     line.delete(bullIFVGlB)
     line.delete(bullIFVGlM)
-    // Two-part box
-    fvgStart   = nz(fvgBearBar, bar_index) - 2
-    ifvgMid    = (fvgBearHi + fvgBearLo) / 2
-    invis      = color.new(color.black, 100)
+    fvgStart     = nz(fvgBearBar, bar_index) - 2
+    ifvgMid      = (fvgBearHi + fvgBearLo) / 2
+    invis        = color.new(color.black, 100)
     bullIFVGpre  := box.new(fvgStart, fvgBearHi, bar_index,             fvgBearLo, bgcolor=color.new(bearColor, 80), border_color=invis)
     bullIFVGpost := box.new(bar_index, fvgBearHi, bar_index + ifvgBars, fvgBearLo, bgcolor=color.new(bullColor, 80), border_color=invis)
-    // Top / bottom / mid lines spanning full zone
-    bullIFVGlT := line.new(fvgStart, fvgBearHi, bar_index + ifvgBars, fvgBearHi, color=color.new(chart.fg_color, 50), style=line.style_dashed, width=1)
-    bullIFVGlB := line.new(fvgStart, fvgBearLo, bar_index + ifvgBars, fvgBearLo, color=color.new(chart.fg_color, 50), style=line.style_dashed, width=1)
-    bullIFVGlM := line.new(fvgStart, ifvgMid,   bar_index + ifvgBars, ifvgMid,   color=color.new(midColor, 40),      style=line.style_dashed, width=1)
+    bullIFVGlT   := line.new(fvgStart, fvgBearHi, bar_index + ifvgBars, fvgBearHi, color=color.new(chart.fg_color, 50), style=line.style_dashed, width=1)
+    bullIFVGlB   := line.new(fvgStart, fvgBearLo, bar_index + ifvgBars, fvgBearLo, color=color.new(chart.fg_color, 50), style=line.style_dashed, width=1)
+    bullIFVGlM   := line.new(fvgStart, ifvgMid,   bar_index + ifvgBars, ifvgMid,   color=color.new(midColor, 40),      style=line.style_dashed, width=1)
 
 if bearIFVGbreak
     bearIFVG    := true
@@ -281,87 +340,99 @@ if bearIFVGbreak
     bullIFVG    := false
     bullIFVGlo  := na
     bullIFVGhi  := na
-    // Clean up prior bull zone
     box.delete(bullIFVGpre)
     box.delete(bullIFVGpost)
     line.delete(bullIFVGlT)
     line.delete(bullIFVGlB)
     line.delete(bullIFVGlM)
-    // Clean up prior bear zone
     box.delete(bearIFVGpre)
     box.delete(bearIFVGpost)
     line.delete(bearIFVGlT)
     line.delete(bearIFVGlB)
     line.delete(bearIFVGlM)
-    // Two-part box
-    fvgStart   = nz(fvgBullBar, bar_index) - 2
-    ifvgMid    = (fvgBullHi + fvgBullLo) / 2
-    invis      = color.new(color.black, 100)
+    fvgStart     = nz(fvgBullBar, bar_index) - 2
+    ifvgMid      = (fvgBullHi + fvgBullLo) / 2
+    invis        = color.new(color.black, 100)
     bearIFVGpre  := box.new(fvgStart, fvgBullHi, bar_index,             fvgBullLo, bgcolor=color.new(bullColor, 80), border_color=invis)
     bearIFVGpost := box.new(bar_index, fvgBullHi, bar_index + ifvgBars, fvgBullLo, bgcolor=color.new(bearColor, 80), border_color=invis)
-    // Top / bottom / mid lines
-    bearIFVGlT := line.new(fvgStart, fvgBullHi, bar_index + ifvgBars, fvgBullHi, color=color.new(chart.fg_color, 50), style=line.style_dashed, width=1)
-    bearIFVGlB := line.new(fvgStart, fvgBullLo, bar_index + ifvgBars, fvgBullLo, color=color.new(chart.fg_color, 50), style=line.style_dashed, width=1)
-    bearIFVGlM := line.new(fvgStart, ifvgMid,   bar_index + ifvgBars, ifvgMid,   color=color.new(midColor, 40),      style=line.style_dashed, width=1)
+    bearIFVGlT   := line.new(fvgStart, fvgBullHi, bar_index + ifvgBars, fvgBullHi, color=color.new(chart.fg_color, 50), style=line.style_dashed, width=1)
+    bearIFVGlB   := line.new(fvgStart, fvgBullLo, bar_index + ifvgBars, fvgBullLo, color=color.new(chart.fg_color, 50), style=line.style_dashed, width=1)
+    bearIFVGlM   := line.new(fvgStart, ifvgMid,   bar_index + ifvgBars, ifvgMid,   color=color.new(midColor, 40),      style=line.style_dashed, width=1)
 
-
-// Expire stale zones
+// Expire stale IFVG zones
 if bullIFVG and not na(bullIFVGbar) and bar_index - bullIFVGbar > ifvgBars
     bullIFVG := false
 if bearIFVG and not na(bearIFVGbar) and bar_index - bearIFVGbar > ifvgBars
     bearIFVG := false
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ENTRY TRIGGER — Unicorn model (exact match)
+// ENTRY TRIGGERS
 //
-// Long:  close above top  AND open inside zone
-//        AND prior bar body was also touching the zone (confirms engagement)
-// Short: close below bottom AND open inside zone
-//        AND prior bar body was also touching the zone
+// IFVG (Unicorn model):
+//   Long:  open inside zone, close above top, prior bar touched zone
+//   Short: open inside zone, close below bottom, prior bar touched zone
+//
+// Breaker Block:
+//   Long:  open in upper half of bullish breaker zone, close above top
+//   Short: open in lower half of bearish breaker zone, close below bottom
+//
+// bar_index > *bar guard prevents trigger on the same bar the zone was created
 // ─────────────────────────────────────────────────────────────────────────────
-longTrigger  = bullIFVG and close > bullIFVGhi and open < bullIFVGhi and open > bullIFVGlo and math.min(close[1], open[1]) < bullIFVGhi and math.max(close[1], open[1]) > bullIFVGlo
+longTrigger  = bullIFVG and bar_index > nz(bullIFVGbar, bar_index) and close > bullIFVGhi and open < bullIFVGhi and open > bullIFVGlo and math.min(close[1], open[1]) < bullIFVGhi and math.max(close[1], open[1]) > bullIFVGlo
 
-shortTrigger = bearIFVG and close < bearIFVGlo and open > bearIFVGlo and open < bearIFVGhi and math.max(close[1], open[1]) > bearIFVGlo and math.min(close[1], open[1]) < bearIFVGhi
+shortTrigger = bearIFVG and bar_index > nz(bearIFVGbar, bar_index) and close < bearIFVGlo and open > bearIFVGlo and open < bearIFVGhi and math.max(close[1], open[1]) > bearIFVGlo and math.min(close[1], open[1]) < bearIFVGhi
+
+bbBullMid = na(bbBullHi) or na(bbBullLo) ? na : (bbBullHi + bbBullLo) / 2
+bbBearMid = na(bbBearHi) or na(bbBearLo) ? na : (bbBearHi + bbBearLo) / 2
+
+bbLongTrigger  = bbBullActive and bar_index > nz(bbBullBar, bar_index) and not na(bbBullMid) and open > bbBullMid and open < bbBullHi and close > bbBullHi
+
+bbShortTrigger = bbBearActive and bar_index > nz(bbBearBar, bar_index) and not na(bbBearMid) and open < bbBearMid and open > bbBearLo and close < bbBearLo
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FINAL SIGNAL
+// FINAL SIGNALS
 // ─────────────────────────────────────────────────────────────────────────────
-longSignal  = inAnyE and sweptSell and longTrigger  and not longTaken  and not na(swingL) and not na(tgtLong)
-shortSignal = inAnyE and sweptBuy  and shortTrigger and not shortTaken and not na(swingH) and not na(tgtShort)
+longSignal    = inAnyE and sweptSell and longTrigger    and not longTaken  and not na(swingL) and not na(tgtLong)
+shortSignal   = inAnyE and sweptBuy  and shortTrigger   and not shortTaken and not na(swingH) and not na(tgtShort)
+bbLongSignal  = inAnyE and sweptSell and bbLongTrigger  and not longTaken  and not na(swingL) and not na(tgtLong)
+bbShortSignal = inAnyE and sweptBuy  and bbShortTrigger and not shortTaken and not na(swingH) and not na(tgtShort)
 
+// IFVG entry levels
 longEntry   = bullIFVGhi
 longStop    = swingL
 longTarget  = tgtLong
-longDiff    = (longTarget - longEntry) * (rrReward / rrRisk)
 
 shortEntry  = bearIFVGlo
 shortStop   = swingH
 shortTarget = tgtShort
-shortDiff   = (shortEntry - shortTarget) * (rrReward / rrRisk)
 
-longRR  = longEntry  != longStop  ? math.round((longTarget  - longEntry)  / (longEntry  - longStop),  1) : na
-shortRR = shortEntry != shortStop ? math.round((shortEntry  - shortTarget) / (shortStop  - shortEntry), 1) : na
+// Breaker block entry levels
+bbLongEntry   = bbBullHi
+bbLongStop    = swingL
+bbLongTarget  = tgtLong
+
+bbShortEntry  = bbBearLo
+bbShortStop   = swingH
+bbShortTarget = tgtShort
+
+longRR    = longEntry    != longStop    ? math.round((longTarget    - longEntry)    / (longEntry    - longStop),    1) : na
+shortRR   = shortEntry   != shortStop   ? math.round((shortEntry    - shortTarget)  / (shortStop    - shortEntry),  1) : na
+bbLongRR  = bbLongEntry  != bbLongStop  ? math.round((bbLongTarget  - bbLongEntry)  / (bbLongEntry  - bbLongStop),  1) : na
+bbShortRR = bbShortEntry != bbShortStop ? math.round((bbShortEntry  - bbShortTarget) / (bbShortStop - bbShortEntry), 1) : na
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TRADE VISUALS — Unicorn model style
-//   • ● dot at entry bar
-//   • Risk box:   stop → entry    (riskColor, gray)
-//   • Reward box: entry → target  (rewardColor, bull/bear)
-//   Both boxes use chart.point.from_index — anchored, never moves
+//   ● dot at entry bar
+//   Risk box:   stop → entry   (gray)
+//   Reward box: entry → target (blue)
+//   chart.point.from_index anchors boxes — never moves on scroll/zoom
 // ─────────────────────────────────────────────────────────────────────────────
 if longSignal
-    // Stop IFVG zone from extending further
     bullIFVG := false
-    // Terminate IFVG lines at trigger bar
     line.set_x2(bullIFVGlT, bar_index)
     line.set_x2(bullIFVGlB, bar_index)
     line.set_x2(bullIFVGlM, bar_index)
-    // Entry dot — Unicorn style
-    label.new(bar_index, low, "●",
-              color=color.new(color.black, 100), textcolor=bullColor,
-              style=label.style_label_center, size=size.small)
-    // Risk box: stop → entry (gray), Reward box: entry → target
-    // chart.point.from_index anchors boxes to exact bar/price — stays fixed on scroll/zoom
+    label.new(bar_index, low, "●", color=color.new(color.black, 100), textcolor=bullColor, style=label.style_label_center, size=size.small)
     box.delete(riskBox)
     box.delete(rewardBox)
     riskBox   := box.new(chart.point.from_index(bar_index, longStop),   chart.point.from_index(bar_index + extBars, longEntry),  border_color=color.new(color.black, 100), bgcolor=riskColor)
@@ -373,37 +444,49 @@ if shortSignal
     line.set_x2(bearIFVGlT, bar_index)
     line.set_x2(bearIFVGlB, bar_index)
     line.set_x2(bearIFVGlM, bar_index)
-    label.new(bar_index, high, "●",
-              color=color.new(color.black, 100), textcolor=bearColor,
-              style=label.style_label_center, size=size.small)
+    label.new(bar_index, high, "●", color=color.new(color.black, 100), textcolor=bearColor, style=label.style_label_center, size=size.small)
     box.delete(riskBox)
     box.delete(rewardBox)
-    riskBox   := box.new(chart.point.from_index(bar_index, shortEntry), chart.point.from_index(bar_index + extBars, shortStop),   border_color=color.new(color.black, 100), bgcolor=riskColor)
-    rewardBox := box.new(chart.point.from_index(bar_index, shortTarget), chart.point.from_index(bar_index + extBars, shortEntry), border_color=color.new(color.black, 100), bgcolor=rewardColor)
+    riskBox   := box.new(chart.point.from_index(bar_index, shortEntry),  chart.point.from_index(bar_index + extBars, shortStop),   border_color=color.new(color.black, 100), bgcolor=riskColor)
+    rewardBox := box.new(chart.point.from_index(bar_index, shortTarget), chart.point.from_index(bar_index + extBars, shortEntry),  border_color=color.new(color.black, 100), bgcolor=rewardColor)
     shortTaken := true
 
+if bbLongSignal
+    bbBullActive := false
+    line.set_x2(bbBullLM, bar_index)
+    label.new(bar_index, low, "◆", color=color.new(color.black, 100), textcolor=bullColor, style=label.style_label_center, size=size.small)
+    box.delete(riskBox)
+    box.delete(rewardBox)
+    riskBox   := box.new(chart.point.from_index(bar_index, bbLongStop),   chart.point.from_index(bar_index + extBars, bbLongEntry),  border_color=color.new(color.black, 100), bgcolor=riskColor)
+    rewardBox := box.new(chart.point.from_index(bar_index, bbLongEntry),  chart.point.from_index(bar_index + extBars, bbLongTarget), border_color=color.new(color.black, 100), bgcolor=rewardColor)
+    longTaken := true
 
+if bbShortSignal
+    bbBearActive := false
+    line.set_x2(bbBearLM, bar_index)
+    label.new(bar_index, high, "◆", color=color.new(color.black, 100), textcolor=bearColor, style=label.style_label_center, size=size.small)
+    box.delete(riskBox)
+    box.delete(rewardBox)
+    riskBox   := box.new(chart.point.from_index(bar_index, bbShortEntry),  chart.point.from_index(bar_index + extBars, bbShortStop),   border_color=color.new(color.black, 100), bgcolor=riskColor)
+    rewardBox := box.new(chart.point.from_index(bar_index, bbShortTarget), chart.point.from_index(bar_index + extBars, bbShortEntry),  border_color=color.new(color.black, 100), bgcolor=rewardColor)
+    shortTaken := true
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ALERTS
 // ─────────────────────────────────────────────────────────────────────────────
-alertcondition(longSignal,  title="Long Entry",  message="NQ Long: sweep + IFVG retest")
-alertcondition(shortSignal, title="Short Entry", message="NQ Short: sweep + IFVG retest")
+alertcondition(longSignal,    title="Long Entry (IFVG)",         message="NQ Long: sweep + IFVG retest")
+alertcondition(shortSignal,   title="Short Entry (IFVG)",        message="NQ Short: sweep + IFVG retest")
+alertcondition(bbLongSignal,  title="Long Entry (Breaker Block)", message="NQ Long: sweep + breaker block retest")
+alertcondition(bbShortSignal, title="Short Entry (Breaker Block)",message="NQ Short: sweep + breaker block retest")
 
 if longSignal
-    alert('{"symbol":"' + syminfo.ticker
-        + '","session":"' + sess
-        + '","dir":"long","entry":' + str.tostring(longEntry,  "#.##")
-        + ',"stop":'                + str.tostring(longStop,   "#.##")
-        + ',"target":'              + str.tostring(longTarget, "#.##")
-        + ',"rr":'                  + str.tostring(nz(longRR,  0), "#.#")
-        + '}', alert.freq_once_per_bar)
+    alert('{"symbol":"' + syminfo.ticker + '","session":"' + sess + '","type":"ifvg","dir":"long","entry":' + str.tostring(longEntry, "#.##") + ',"stop":' + str.tostring(longStop, "#.##") + ',"target":' + str.tostring(longTarget, "#.##") + ',"rr":' + str.tostring(nz(longRR, 0), "#.#") + '}', alert.freq_once_per_bar)
 
 if shortSignal
-    alert('{"symbol":"' + syminfo.ticker
-        + '","session":"' + sess
-        + '","dir":"short","entry":' + str.tostring(shortEntry,  "#.##")
-        + ',"stop":'                 + str.tostring(shortStop,   "#.##")
-        + ',"target":'               + str.tostring(shortTarget, "#.##")
-        + ',"rr":'                   + str.tostring(nz(shortRR,  0), "#.#")
-        + '}', alert.freq_once_per_bar)
+    alert('{"symbol":"' + syminfo.ticker + '","session":"' + sess + '","type":"ifvg","dir":"short","entry":' + str.tostring(shortEntry, "#.##") + ',"stop":' + str.tostring(shortStop, "#.##") + ',"target":' + str.tostring(shortTarget, "#.##") + ',"rr":' + str.tostring(nz(shortRR, 0), "#.#") + '}', alert.freq_once_per_bar)
+
+if bbLongSignal
+    alert('{"symbol":"' + syminfo.ticker + '","session":"' + sess + '","type":"breaker","dir":"long","entry":' + str.tostring(bbLongEntry, "#.##") + ',"stop":' + str.tostring(bbLongStop, "#.##") + ',"target":' + str.tostring(bbLongTarget, "#.##") + ',"rr":' + str.tostring(nz(bbLongRR, 0), "#.#") + '}', alert.freq_once_per_bar)
+
+if bbShortSignal
+    alert('{"symbol":"' + syminfo.ticker + '","session":"' + sess + '","type":"breaker","dir":"short","entry":' + str.tostring(bbShortEntry, "#.##") + ',"stop":' + str.tostring(bbShortStop, "#.##") + ',"target":' + str.tostring(bbShortTarget, "#.##") + ',"rr":' + str.tostring(nz(bbShortRR, 0), "#.#") + '}', alert.freq_once_per_bar)
