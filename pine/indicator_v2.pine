@@ -284,9 +284,9 @@ if bearIFVG and not na(bearIFVGbar) and bar_index - bearIFVGbar > ifvgBars
 //   Long:  open in upper half of zone, close above top
 //   Short: open in lower half of zone, close below bottom
 // ─────────────────────────────────────────────────────────────────────────────
-longTrigger  = bullIFVG and bar_index > nz(bullIFVGbar, bar_index) and close > bullIFVGhi and open < bullIFVGhi and open > bullIFVGlo and math.min(close[1], open[1]) < bullIFVGhi and math.max(close[1], open[1]) > bullIFVGlo
+longTrigger  = bullIFVG and bar_index > nz(bullIFVGbar, bar_index) and open > bullIFVGlo and open < bullIFVGhi and close > bullIFVGhi
 
-shortTrigger = bearIFVG and bar_index > nz(bearIFVGbar, bar_index) and close < bearIFVGlo and open > bearIFVGlo and open < bearIFVGhi and math.max(close[1], open[1]) > bearIFVGlo and math.min(close[1], open[1]) < bearIFVGhi
+shortTrigger = bearIFVG and bar_index > nz(bearIFVGbar, bar_index) and open > bearIFVGlo and open < bearIFVGhi and close < bearIFVGlo
 
 bbBullMid = na(bbBullHi) or na(bbBullLo) ? na : (bbBullHi + bbBullLo) / 2
 bbBearMid = na(bbBearHi) or na(bbBearLo) ? na : (bbBearHi + bbBearLo) / 2
