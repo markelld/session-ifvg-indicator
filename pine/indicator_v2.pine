@@ -34,7 +34,8 @@ inPre     = not na(time(timeframe.period, "0700-0930", tz))
 inAsiaE   = not na(time(timeframe.period, "1900-2030", tz))
 inLondonE = not na(time(timeframe.period, "0200-0330", tz))
 inNYE     = not na(time(timeframe.period, "0930-1100", tz))
-inAnyE    = inAsiaE or inLondonE or inNYE
+inAnyE       = inAsiaE or inLondonE or inNYE
+inAnySession = inAsia or inLondon or inNYE
 
 asiaStart    = inAsia    and not inAsia[1]
 londonStart  = inLondon  and not inLondon[1]
@@ -174,9 +175,9 @@ if buySweep
     tgtShort  := refLow
 
 // Track the extreme of the sweep move — used for stop placement
-if inAnyE and sweptSell
+if inAnySession and sweptSell
     sweepLow := na(sweepLow) ? low : math.min(sweepLow, low)
-if inAnyE and sweptBuy
+if inAnySession and sweptBuy
     sweepHigh := na(sweepHigh) ? high : math.max(sweepHigh, high)
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,8 +203,8 @@ if inAnyE
 // ─────────────────────────────────────────────────────────────────────────────
 // IFVG ACTIVATION (logic only, no visuals until signal fires)
 // ─────────────────────────────────────────────────────────────────────────────
-bullIFVGbreak = inAnyE and sweptSell and not na(fvgBearLo) and close > fvgBearLo and not bullIFVG
-bearIFVGbreak = inAnyE and sweptBuy  and not na(fvgBullHi) and close < fvgBullHi and not bearIFVG
+bullIFVGbreak = inAnySession and sweptSell and not na(fvgBearLo) and close > fvgBearLo and not bullIFVG
+bearIFVGbreak = inAnySession and sweptBuy  and not na(fvgBullHi) and close < fvgBullHi and not bearIFVG
 
 if bullIFVGbreak
     bullIFVG    := true
@@ -241,8 +242,8 @@ shortTrigger = bearIFVG and bar_index > nz(bearIFVGbar, bar_index) and open > be
 // ─────────────────────────────────────────────────────────────────────────────
 // FINAL SIGNALS
 // ─────────────────────────────────────────────────────────────────────────────
-longSignal  = inAnyE and sweptSell and longTrigger  and not longTaken  and not na(sweepLow)  and not na(tgtLong)
-shortSignal = inAnyE and sweptBuy  and shortTrigger and not shortTaken and not na(sweepHigh) and not na(tgtShort)
+longSignal  = inAnySession and sweptSell and longTrigger  and not longTaken  and not na(sweepLow)  and not na(tgtLong)
+shortSignal = inAnySession and sweptBuy  and shortTrigger and not shortTaken and not na(sweepHigh) and not na(tgtShort)
 
 // Entry levels
 longEntry  = bullIFVGhi
