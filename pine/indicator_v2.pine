@@ -234,12 +234,9 @@ if bearIFVG and not na(bearIFVGbar) and bar_index - bearIFVGbar > ifvgBars
 //   Long:  open inside zone, close above midpoint
 //   Short: open inside zone, close below midpoint
 // ─────────────────────────────────────────────────────────────────────────────
-bullIFVGmid  = (bullIFVGhi + bullIFVGlo) / 2
-bearIFVGmid  = (bearIFVGhi + bearIFVGlo) / 2
+longTrigger  = bullIFVG and bar_index > nz(bullIFVGbar, bar_index) and open > bullIFVGlo and open < bullIFVGhi and close > bullIFVGhi
 
-longTrigger  = bullIFVG and bar_index > nz(bullIFVGbar, bar_index) and open > bullIFVGlo and open < bullIFVGhi and close > bullIFVGmid
-
-shortTrigger = bearIFVG and bar_index > nz(bearIFVGbar, bar_index) and open > bearIFVGlo and open < bearIFVGhi and close < bearIFVGmid
+shortTrigger = bearIFVG and bar_index > nz(bearIFVGbar, bar_index) and open > bearIFVGlo and open < bearIFVGhi and close < bearIFVGlo
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FINAL SIGNALS
