@@ -84,22 +84,14 @@ else if inPre
 // ─────────────────────────────────────────────────────────────────────────────
 // SWING PIVOTS — for stop placement
 // ─────────────────────────────────────────────────────────────────────────────
-var float swingH = na
-var float swingL = na
-
-ph = ta.pivothigh(high, 3, 3)
-pl = ta.pivotlow(low,  3, 3)
-
-if not na(ph)
-    swingH := ph
-if not na(pl)
-    swingL := pl
-
-// ─────────────────────────────────────────────────────────────────────────────
 // PER-WINDOW STATE — reset at each session entry open
 // ─────────────────────────────────────────────────────────────────────────────
 var bool  sweptSell   = false
 var bool  sweptBuy    = false
+
+// Sweep extremes — lowest low after sell sweep, highest high after buy sweep
+var float sweepLow    = na
+var float sweepHigh   = na
 var float tgtLong     = na
 var float tgtShort    = na
 
@@ -148,6 +140,8 @@ if anyEStart
     bearIFVGlo   := na
     bearIFVGhi   := na
     bearIFVGbar  := na
+    sweepLow     := na
+    sweepHigh    := na
     longTaken    := false
     shortTaken   := false
     sess         := asiaEStart ? "Asia" : londonEStart ? "London" : "NY"
@@ -178,6 +172,12 @@ if buySweep
     sweptBuy  := true
     sweptSell := false
     tgtShort  := refLow
+
+// Track the extreme of the sweep move — used for stop placement
+if inAnyE and sweptSell
+    sweepLow := na(sweepLow) ? low : math.min(sweepLow, low)
+if inAnyE and sweptBuy
+    sweepHigh := na(sweepHigh) ? high : math.max(sweepHigh, high)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FVG DETECTION — only after a sweep
@@ -244,16 +244,16 @@ shortTrigger = bearIFVG and bar_index > nz(bearIFVGbar, bar_index) and open > be
 // ─────────────────────────────────────────────────────────────────────────────
 // FINAL SIGNALS
 // ─────────────────────────────────────────────────────────────────────────────
-longSignal  = inAnyE and sweptSell and longTrigger  and not longTaken  and not na(swingL) and not na(tgtLong)
-shortSignal = inAnyE and sweptBuy  and shortTrigger and not shortTaken and not na(swingH) and not na(tgtShort)
+longSignal  = inAnyE and sweptSell and longTrigger  and not longTaken  and not na(sweepLow)  and not na(tgtLong)
+shortSignal = inAnyE and sweptBuy  and shortTrigger and not shortTaken and not na(sweepHigh) and not na(tgtShort)
 
 // Entry levels
 longEntry  = bullIFVGhi
-longStop   = swingL
+longStop   = sweepLow
 longTarget = tgtLong
 
 shortEntry  = bearIFVGlo
-shortStop   = swingH
+shortStop   = sweepHigh
 shortTarget = tgtShort
 
 longRR  = longEntry  != longStop  ? math.round((longTarget  - longEntry)  / (longEntry  - longStop),  1) : na
