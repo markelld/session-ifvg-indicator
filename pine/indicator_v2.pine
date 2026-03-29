@@ -82,20 +82,16 @@ else if inPre
     preL := math.min(nz(preL,  low),  low)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SWING PIVOTS — for stop placement
-// ─────────────────────────────────────────────────────────────────────────────
 // PER-WINDOW STATE — reset at each session entry open
 // ─────────────────────────────────────────────────────────────────────────────
 var bool  sweptSell   = false
 var bool  sweptBuy    = false
 
-// Sweep extremes — lowest low after sell sweep, highest high after buy sweep
 var float sweepLow    = na
 var float sweepHigh   = na
 var float tgtLong     = na
 var float tgtShort    = na
 
-// FVG captured post-sweep
 var float fvgBearLo   = na
 var float fvgBearHi   = na
 var int   fvgBearBar  = na
@@ -104,13 +100,11 @@ var float fvgBullLo   = na
 var float fvgBullHi   = na
 var int   fvgBullBar  = na
 
-// Bullish IFVG (inverted from bearish FVG, after sell sweep)
 var bool  bullIFVG     = false
 var float bullIFVGlo   = na
 var float bullIFVGhi   = na
 var int   bullIFVGbar  = na
 
-// Bearish IFVG (inverted from bullish FVG, after buy sweep)
 var bool  bearIFVG     = false
 var float bearIFVGlo   = na
 var float bearIFVGhi   = na
@@ -120,7 +114,7 @@ var bool   longTaken   = false
 var bool   shortTaken  = false
 var string sess        = "—"
 
-// ── Reset at each session entry open ──────────────────────────────────────────
+// ── Reset at each session entry open ─────────────────────────────────────────
 if anyEStart
     sweptSell    := false
     sweptBuy     := false
@@ -173,7 +167,6 @@ if buySweep
     sweptSell := false
     tgtShort  := refLow
 
-// Track the extreme of the sweep move — used for stop placement
 if inAnyE and sweptSell
     sweepLow := na(sweepLow) ? low : math.min(sweepLow, low)
 if inAnyE and sweptBuy
@@ -181,9 +174,6 @@ if inAnyE and sweptBuy
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FVG DETECTION — only after a sweep
-//
-// Bearish FVG (gap down):  high < low[2]  → zone: [high, low[2]]
-// Bullish FVG (gap up):    low > high[2]  → zone: [high[2], low]
 // ─────────────────────────────────────────────────────────────────────────────
 bearFVG = high < low[2]
 bullFVG = low  > high[2]
@@ -200,7 +190,7 @@ if inAnyE
         fvgBullBar := bar_index
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IFVG ACTIVATION (logic only, no visuals until signal fires)
+// IFVG ACTIVATION
 // ─────────────────────────────────────────────────────────────────────────────
 bullIFVGbreak = inAnyE and sweptSell and not na(fvgBearLo) and close > fvgBearLo and not bullIFVG
 bearIFVGbreak = inAnyE and sweptBuy  and not na(fvgBullHi) and close < fvgBullHi and not bearIFVG
@@ -223,19 +213,15 @@ if bearIFVGbreak
     bullIFVGlo  := na
     bullIFVGhi  := na
 
-// Expire stale IFVG zones
 if bullIFVG and not na(bullIFVGbar) and bar_index - bullIFVGbar > ifvgBars
     bullIFVG := false
 if bearIFVG and not na(bearIFVGbar) and bar_index - bearIFVGbar > ifvgBars
     bearIFVG := false
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ENTRY TRIGGERS — IFVG only
-//   Long:  open inside zone, close above midpoint
-//   Short: open inside zone, close below midpoint
+// ENTRY TRIGGERS
 // ─────────────────────────────────────────────────────────────────────────────
 longTrigger  = bullIFVG and bar_index > nz(bullIFVGbar, bar_index) and open > bullIFVGlo and open < bullIFVGhi and close > bullIFVGhi
-
 shortTrigger = bearIFVG and bar_index > nz(bearIFVGbar, bar_index) and open > bearIFVGlo and open < bearIFVGhi and close < bearIFVGlo
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -244,7 +230,6 @@ shortTrigger = bearIFVG and bar_index > nz(bearIFVGbar, bar_index) and open > be
 longSignal  = inAnyE and sweptSell and longTrigger  and not longTaken  and not na(sweepLow)  and not na(tgtLong)
 shortSignal = inAnyE and sweptBuy  and shortTrigger and not shortTaken and not na(sweepHigh) and not na(tgtShort)
 
-// Entry levels
 longEntry  = bullIFVGhi
 longStop   = sweepLow
 longTarget = tgtLong
@@ -257,7 +242,7 @@ longRR  = longEntry  != longStop  ? math.round((longTarget  - longEntry)  / (lon
 shortRR = shortEntry != shortStop ? math.round((shortEntry  - shortTarget) / (shortStop - shortEntry), 1) : na
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TRADE VISUALS — zones + R/R only drawn on signal fire
+// TRADE VISUALS
 // ─────────────────────────────────────────────────────────────────────────────
 invis = color.new(color.black, 100)
 
@@ -290,13 +275,15 @@ if shortSignal
     shortTaken := true
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ALERTS
+// ALERTS — stop_points added for execution system position sizing
 // ─────────────────────────────────────────────────────────────────────────────
 alertcondition(longSignal,  title="Long Entry (IFVG)",  message="NQ Long: sweep + IFVG retest")
 alertcondition(shortSignal, title="Short Entry (IFVG)", message="NQ Short: sweep + IFVG retest")
 
 if longSignal
-    alert('{"symbol":"' + syminfo.ticker + '","session":"' + sess + '","type":"ifvg","dir":"long","entry":' + str.tostring(longEntry, "#.##") + ',"stop":' + str.tostring(longStop, "#.##") + ',"target":' + str.tostring(longTarget, "#.##") + ',"rr":' + str.tostring(nz(longRR, 0), "#.#") + '}', alert.freq_once_per_bar)
+    longStopPts = math.round(longEntry - longStop)
+    alert('{"symbol":"MNQ","session":"' + sess + '","type":"ifvg","dir":"long","entry":' + str.tostring(longEntry, "#.##") + ',"stop":' + str.tostring(longStop, "#.##") + ',"target":' + str.tostring(longTarget, "#.##") + ',"stop_points":' + str.tostring(longStopPts, "#") + ',"rr":' + str.tostring(nz(longRR, 0), "#.#") + '}', alert.freq_once_per_bar)
 
 if shortSignal
-    alert('{"symbol":"' + syminfo.ticker + '","session":"' + sess + '","type":"ifvg","dir":"short","entry":' + str.tostring(shortEntry, "#.##") + ',"stop":' + str.tostring(shortStop, "#.##") + ',"target":' + str.tostring(shortTarget, "#.##") + ',"rr":' + str.tostring(nz(shortRR, 0), "#.#") + '}', alert.freq_once_per_bar)
+    shortStopPts = math.round(shortStop - shortEntry)
+    alert('{"symbol":"MNQ","session":"' + sess + '","type":"ifvg","dir":"short","entry":' + str.tostring(shortEntry, "#.##") + ',"stop":' + str.tostring(shortStop, "#.##") + ',"target":' + str.tostring(shortTarget, "#.##") + ',"stop_points":' + str.tostring(shortStopPts, "#") + ',"rr":' + str.tostring(nz(shortRR, 0), "#.#") + '}', alert.freq_once_per_bar)
